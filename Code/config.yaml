@@ -1,0 +1,10 @@
+camera_id: 0
+mediapipe_model_path: mediapipe_models/
+whisper_model_path: base
+nlp_model: en_core_web_sm
+robot_ip: "192.168.1.100"
+confidence_threshold: 0.85
+log_level: INFO
+safety:
+  stop_gesture: true
+  stop_voice: true
