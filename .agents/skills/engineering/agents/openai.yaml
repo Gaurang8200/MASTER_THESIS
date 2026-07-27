@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Engineering"
+  short_description: "Senior AI robotics engineering standards"
+  default_prompt: "Use $engineering to implement a robust robotics feature in this repository."
