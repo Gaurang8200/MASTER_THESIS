@@ -1,0 +1,25 @@
+Main Top Position (-X): 
+-0.37221, -0.01232, 0.55941, 2.944, -1.163, 0.023
+
+Intermediate Position:
+0, 0.4, 0.25,
+
+Absatz für Camera = 84mm
+Second Photo Click from Z = 500mm
+Abstell Winkel: 2.221, 2.221, 0
+
+If it is 0 then define the given variable as global variable
+z_pick = 0.053
+x_place, y_place, z_place = 0.366, -0.146, 0.067
+
+If it is 1 then define the given variable as global variable
+z_pick = 0.030
+x_place, y_place, z_place = 0.366, -0.008, 0.048
+
+If it is 2 then define the given variable as global variable
+z_pick = 0.022
+x_place, y_place, z_place = 0.366, 0.121, 0.040
+
+
+
+
