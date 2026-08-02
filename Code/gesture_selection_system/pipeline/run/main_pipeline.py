@@ -34,15 +34,11 @@ for _folder in ("support", "detection", "logic", "integration"):
         sys.path.insert(0, _path)
 
 
-from config import GestureConfig, load_config
-from existing_calibration_adapter import (
-    PlaceCalibrationError,
-    build_place_calibration,
-    calibration_available,
-)
+from calibration import ExistingRepoCalibration, PlaceCalibrationError, calibration_available
+from config import GestureConfig, load_config, resolve_device
 from fingertip_selection import ObjectSelector, bbox_center
 from gesture_state_machine import GestureStateMachine
-from object_interface_mock import MockObjectDetector
+from object_detector import Yolov5ObjectDetector
 from place_point_selector import PlacePointSelector
 from robot_handoff import RobotHandoff
 from schemas import (
@@ -115,9 +111,7 @@ class GestureSelectionPipeline:
         self._object_source.start()
         self._place_selector.start()
         self._started = True
-        LOGGER.info(
-            "pipeline_started place_calibration=%s", self._place_selector.calibration_mode
-        )
+        LOGGER.info("pipeline_started")
 
     def close(self) -> None:
         self._started = False
@@ -174,9 +168,9 @@ class GestureSelectionPipeline:
         if state.mode is SelectionMode.ON and center is not None and not pointing_ok:
             notes.append("pointing_finger_missing")
 
-        # No calibration is required for fingertip to mask object selection
-        # because the fingertip point and the masks are both in image space.
-        selection = self._object_selector.update(center, objects, frame_shape, active, timestamp)
+        # No calibration is required for object selection because the fingertip
+        # point and the object boxes are both in image coordinates.
+        selection = self._object_selector.update(center, objects, active, timestamp)
         notes.extend(selection.notes)
 
         # Calibration is only used when converting a fingertip pixel on the
@@ -196,7 +190,6 @@ class GestureSelectionPipeline:
             fingertip_model = FingertipModel(
                 center_px=PointModel(x=center[0], y=center[1]),
                 confidence=fingertip.confidence,
-                probe_radius_px=self._config.selection.fingertip_radius_px,
                 inside_workspace=place.inside_workspace,
                 pointing_finger_present=pointing_present,
             )
@@ -225,6 +218,8 @@ class GestureSelectionPipeline:
         return PipelineOutput(
             mode=interaction_mode,
             frame_index=frame_index,
+            frame_width=frame.shape[1],
+            frame_height=frame.shape[0],
             timestamp_monotonic_s=timestamp,
             selection_mode=state.mode,
             mode_transition=state.transition,
@@ -277,11 +272,7 @@ class GestureSelectionPipeline:
             confidence=selected.confidence,
             bbox=BoxModel.from_box(selected.box),
             centroid_px=PointModel(x=center_x, y=center_y),
-            mask_overlap_px=self._object_selector.overlap_px,
             held_s=self._object_selector.held_s,
-            pick_pose=(
-                PoseModel.from_pose(selected.pick_pose) if selected.pick_pose is not None else None
-            ),
         )
 
     def _place_model(self, place) -> PlacePointModel | None:
@@ -290,7 +281,6 @@ class GestureSelectionPipeline:
         return PlacePointModel(
             pixel=PointModel(x=place.place_pixel[0], y=place.place_pixel[1]),
             pose=PoseModel.from_pose(place.pose),
-            calibration_mode=self._place_selector.calibration_mode,
             held_s=place.held_s,
         )
 
@@ -308,7 +298,7 @@ def build_pipeline(
     object_source: ObjectSource | None = None,
     place_calibration: PlaceCalibration | None = None,
 ) -> GestureSelectionPipeline:
-    """Wire the default components, allowing any of them to be replaced."""
+    """Wire the real components, allowing any of them to be replaced."""
     if gesture_source is None:
         from gesture_detector import GestureDetector
 
@@ -318,9 +308,13 @@ def build_pipeline(
             class_ids_by_index=config.gesture_by_class_id(),
         )
     if object_source is None:
-        object_source = MockObjectDetector()
+        object_source = Yolov5ObjectDetector(
+            config=config.object_model,
+            device=resolve_device(config.model.device),
+            confidence=config.confidence.object,
+        )
     if place_calibration is None:
-        place_calibration = build_place_calibration(config.place_calibration)
+        place_calibration = ExistingRepoCalibration(config.place_calibration)
     return GestureSelectionPipeline(config, gesture_source, object_source, place_calibration)
 
 
@@ -348,8 +342,7 @@ def run(
         from visualization import render_pipeline_frame
 
     pipeline = build_pipeline(config)
-    # Dispatch stays off, the demo only shows what would be sent to the robot.
-    handoff = RobotHandoff(dispatch=False)
+    handoff = RobotHandoff(config.robot, config.place_calibration)
     records: list[dict] = []
     previous_signature = None
     camera = None
@@ -394,8 +387,7 @@ def run(
                     objects=pipeline.last_objects,
                     gesture_frame=pipeline.last_gesture_frame,
                     polygon=config.workspace.to_pixels(frame.shape[1], frame.shape[0]),
-                    show_masks=config.visualization.show_masks,
-                    mask_alpha=config.visualization.mask_alpha,
+                    show_object_boxes=config.visualization.show_object_boxes,
                     show_workspace=config.visualization.show_workspace,
                     show_hud=config.visualization.show_hud,
                     marker_radius=config.visualization.fingertip_marker_radius_px,
@@ -449,15 +441,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    if config.place_calibration.mode != "mock" and not calibration_available(
-        config.place_calibration
-    ):
+    if not calibration_available(config.place_calibration):
         print(
             "the calibration files of the existing repository are missing, "
-            "fix place_calibration.existing_repo.repo_path or switch the mode to mock",
+            f"looked in {config.place_calibration.repo_dir}",
             file=sys.stderr,
         )
         return 2
+
+    if config.robot.dispatch:
+        print(
+            f"robot dispatch is ON, motions will be sent to {config.robot.host}",
+            file=sys.stderr,
+        )
 
     return run(
         config=config,

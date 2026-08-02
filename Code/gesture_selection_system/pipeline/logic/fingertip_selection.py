@@ -1,12 +1,12 @@
 """Fingertip geometry and object selection.
 
-No calibration is required for fingertip to mask object selection because the
-fingertip point and the object masks are both in image coordinates. Everything
-in this module is pure geometry over numpy arrays and stability counting.
+No calibration is required here. The fingertip point and the object boxes are
+both in image coordinates, so the whole decision is plain geometry.
 
-A fingertip only selects an object when the probe circle actually overlaps the
-segmentation mask, so a finger that is near an object but outside its mask never
-selects it.
+The detector of the existing pick and drop system reports bounding boxes and no
+segmentation masks, so a fingertip selects an object by sitting inside its box.
+Where boxes overlap the smallest one wins, which resolves to the object the
+operator is actually on rather than a large box that merely surrounds it.
 """
 
 from __future__ import annotations
@@ -26,6 +26,23 @@ LOGGER = logging.getLogger(__name__)
 def bbox_center(box: BoundingBox) -> tuple[float, float]:
     """Center point of the index fingertip box in pixels."""
     return box.center
+
+
+def point_in_box(point: tuple[float, float], box: BoundingBox) -> bool:
+    x, y = float(point[0]), float(point[1])
+    return box.x1 <= x <= box.x2 and box.y1 <= y <= box.y2
+
+
+def center_distance_ratio(point: tuple[float, float], box: BoundingBox) -> float:
+    """How far the point sits from the box center, in half box widths.
+
+    Zero is dead center and one is the box edge. Used by the optional stricter
+    rule that stops a fingertip near a box corner from selecting it.
+    """
+    center_x, center_y = box.center
+    half_w = max(box.width / 2.0, 1e-6)
+    half_h = max(box.height / 2.0, 1e-6)
+    return max(abs(float(point[0]) - center_x) / half_w, abs(float(point[1]) - center_y) / half_h)
 
 
 def point_in_polygon(point: tuple[float, float], polygon: np.ndarray) -> bool:
@@ -49,47 +66,14 @@ def point_in_polygon(point: tuple[float, float], polygon: np.ndarray) -> bool:
     return inside
 
 
-def circle_mask_overlap(mask: np.ndarray, center: tuple[float, float], radius: int) -> int:
-    """Count mask pixels covered by the fingertip probe.
-
-    A radius of zero tests the single center pixel, which is the strictest
-    reading of the selection rule.
-    """
-    if mask is None or mask.ndim < 2:
-        return 0
-
-    height, width = mask.shape[:2]
-    center_x, center_y = float(center[0]), float(center[1])
-
-    if radius <= 0:
-        x_index = int(round(center_x))
-        y_index = int(round(center_y))
-        if 0 <= x_index < width and 0 <= y_index < height:
-            return int(bool(mask[y_index, x_index]))
-        return 0
-
-    x_start = max(int(np.floor(center_x - radius)), 0)
-    x_end = min(int(np.ceil(center_x + radius)) + 1, width)
-    y_start = max(int(np.floor(center_y - radius)), 0)
-    y_end = min(int(np.ceil(center_y + radius)) + 1, height)
-    if x_start >= x_end or y_start >= y_end:
-        return 0
-
-    ys, xs = np.ogrid[y_start:y_end, x_start:x_end]
-    probe = (xs - center_x) ** 2 + (ys - center_y) ** 2 <= float(radius) ** 2
-    window = mask[y_start:y_end, x_start:x_end].astype(bool, copy=False)
-    return int(np.count_nonzero(np.logical_and(window, probe)))
-
-
 @dataclass(frozen=True)
 class TouchResult:
-    """Which object the fingertip is touching in the current frame."""
+    """Which object the fingertip is on in the current frame."""
 
     touched: DetectedObject | None
-    overlap_px: int
     considered: int
     skipped_low_confidence: int
-    skipped_missing_mask: int
+    skipped_off_center: int
 
     @property
     def object_id(self) -> str | None:
@@ -99,49 +83,37 @@ class TouchResult:
 def find_touched_object(
     objects: Iterable[DetectedObject],
     center: tuple[float, float],
-    frame_shape: tuple[int, int],
-    radius: int,
-    min_overlap_px: int,
     confidence_threshold: float,
+    max_center_distance_ratio: float | None = None,
 ) -> TouchResult:
-    """Return the object whose mask the fingertip probe overlaps most.
-
-    Objects without a usable mask are skipped rather than approximated by their
-    bounding box, because a box hit would select an object the finger only
-    hovers next to.
-    """
+    """Return the smallest object box the fingertip sits inside."""
     best: DetectedObject | None = None
-    best_overlap = 0
     considered = 0
     skipped_low_confidence = 0
-    skipped_missing_mask = 0
+    skipped_off_center = 0
 
     for candidate in objects:
         if candidate.confidence < confidence_threshold:
             skipped_low_confidence += 1
             continue
-        if not candidate.has_mask_for(frame_shape):
-            skipped_missing_mask += 1
-            continue
 
         considered += 1
-        overlap = circle_mask_overlap(candidate.mask, center, radius)
-        if overlap < min_overlap_px:
+        if not point_in_box(center, candidate.box):
             continue
-        if overlap > best_overlap or (
-            overlap == best_overlap
-            and best is not None
-            and candidate.confidence > best.confidence
+        if (
+            max_center_distance_ratio is not None
+            and center_distance_ratio(center, candidate.box) > max_center_distance_ratio
         ):
+            skipped_off_center += 1
+            continue
+        if best is None or candidate.box.area < best.box.area:
             best = candidate
-            best_overlap = overlap
 
     return TouchResult(
         touched=best,
-        overlap_px=best_overlap if best is not None else 0,
         considered=considered,
         skipped_low_confidence=skipped_low_confidence,
-        skipped_missing_mask=skipped_missing_mask,
+        skipped_off_center=skipped_off_center,
     )
 
 
@@ -209,7 +181,6 @@ class ObjectSelectionDecision:
 
     candidate_id: str | None
     selected: DetectedObject | None
-    overlap_px: int
     held_s: float
     just_selected: bool
     notes: tuple[str, ...] = ()
@@ -220,11 +191,11 @@ class ObjectSelectionDecision:
 
 
 class ObjectSelector:
-    """Selects the object the fingertip keeps touching.
+    """Selects the object the fingertip keeps pointing at.
 
     Image coordinates only. The fingertip pixel comes from the YOLO
-    index_fingertip box and the masks come from the object segmentation system,
-    so no camera calibration takes part in this decision.
+    index_fingertip box and the object boxes come from the existing detector, so
+    no camera calibration takes part in this decision.
     """
 
     def __init__(self, selection: SelectionConfig, object_confidence: float, hold_seconds: float):
@@ -232,16 +203,11 @@ class ObjectSelector:
         self._object_confidence = object_confidence
         self._timer = HoldTimer(hold_seconds)
         self._selected: DetectedObject | None = None
-        self._overlap_px = 0
         self._held_s = 0.0
 
     @property
     def selected(self) -> DetectedObject | None:
         return self._selected
-
-    @property
-    def overlap_px(self) -> int:
-        return self._overlap_px
 
     @property
     def held_s(self) -> float:
@@ -250,14 +216,12 @@ class ObjectSelector:
     def reset(self) -> None:
         self._timer.reset()
         self._selected = None
-        self._overlap_px = 0
         self._held_s = 0.0
 
     def update(
         self,
         center: tuple[float, float] | None,
         objects: Sequence[DetectedObject],
-        frame_shape: tuple[int, int],
         active: bool,
         now: float,
     ) -> ObjectSelectionDecision:
@@ -268,61 +232,51 @@ class ObjectSelector:
             if self._selected is not None and not self._selection.hold_selection_until_mode_off:
                 self.reset()
                 notes.append("selection_cleared:fingertip_lost")
-            return self._decision(None, 0, False, notes)
+            return self._decision(None, False, notes)
 
         touch = find_touched_object(
             objects=objects,
             center=center,
-            frame_shape=frame_shape,
-            radius=self._selection.fingertip_radius_px,
-            min_overlap_px=self._selection.min_mask_overlap_px,
             confidence_threshold=self._object_confidence,
+            max_center_distance_ratio=self._selection.max_center_distance_ratio,
         )
         if touch.skipped_low_confidence:
             notes.append(f"objects_below_confidence:{touch.skipped_low_confidence}")
-        if touch.skipped_missing_mask:
-            notes.append(f"objects_without_mask:{touch.skipped_missing_mask}")
+        if touch.skipped_off_center:
+            notes.append(f"objects_too_far_from_center:{touch.skipped_off_center}")
         if touch.touched is None and touch.considered:
-            notes.append("fingertip_not_inside_any_mask")
+            notes.append("fingertip_not_on_any_object")
 
         state = self._timer.update(touch.object_id, now)
         just_selected = False
 
         if state.just_confirmed and touch.touched is not None:
             self._selected = touch.touched
-            self._overlap_px = touch.overlap_px
             self._held_s = state.held_s
             just_selected = True
             notes.append("object_selected")
             LOGGER.info(
-                "object_selected id=%s class=%s overlap_px=%d held_s=%.1f",
+                "object_selected id=%s class=%s held_s=%.1f",
                 touch.touched.object_id,
                 touch.touched.class_name,
-                touch.overlap_px,
                 state.held_s,
             )
         elif self._selected is not None:
             if touch.object_id == self._selected.object_id and touch.touched is not None:
                 self._selected = touch.touched
-                self._overlap_px = touch.overlap_px
                 self._held_s = state.held_s
             elif not self._selection.hold_selection_until_mode_off:
                 self.reset()
                 notes.append("selection_cleared:fingertip_left_object")
 
-        return self._decision(touch.object_id, touch.overlap_px, just_selected, notes)
+        return self._decision(touch.object_id, just_selected, notes)
 
     def _decision(
-        self,
-        candidate_id: str | None,
-        overlap_px: int,
-        just_selected: bool,
-        notes: Sequence[str],
+        self, candidate_id: str | None, just_selected: bool, notes: Sequence[str]
     ) -> ObjectSelectionDecision:
         return ObjectSelectionDecision(
             candidate_id=candidate_id,
             selected=self._selected,
-            overlap_px=self._overlap_px if self._selected is not None else overlap_px,
             held_s=round(self._held_s, 2),
             just_selected=just_selected,
             notes=tuple(notes),
@@ -334,14 +288,3 @@ def place_grid_key(center: tuple[float, float], cell_px: int = 20) -> str:
     if cell_px < 1:
         raise ValueError("cell_px must be at least 1")
     return f"place:{int(center[0]) // cell_px},{int(center[1]) // cell_px}"
-
-
-def polygon_bounds(polygon: Sequence[Sequence[float]]) -> tuple[float, float, float, float]:
-    """Axis aligned bounds of the workspace polygon, useful for drawing and tests."""
-    poly = np.asarray(polygon, dtype=np.float64)
-    return (
-        float(poly[:, 0].min()),
-        float(poly[:, 1].min()),
-        float(poly[:, 0].max()),
-        float(poly[:, 1].max()),
-    )

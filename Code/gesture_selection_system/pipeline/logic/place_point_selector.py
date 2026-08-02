@@ -63,10 +63,6 @@ class PlacePointSelector:
         self._place: tuple[tuple[float, float], RobotPose, float] | None = None
 
     @property
-    def calibration_mode(self) -> str:
-        return self._calibration.mode
-
-    @property
     def place(self) -> tuple[tuple[float, float], RobotPose, float] | None:
         return self._place
 
@@ -125,14 +121,13 @@ class PlacePointSelector:
                 self._place = (candidate_pixel, pose, state.held_s)
                 notes.append("place_point_confirmed")
                 LOGGER.info(
-                    "place_point_confirmed pixel=%.1f,%.1f pose=%.4f,%.4f,%.4f held_s=%.1f mode=%s",
+                    "place_point_confirmed pixel=%.1f,%.1f pose=%.4f,%.4f,%.4f held_s=%.1f",
                     candidate_pixel[0],
                     candidate_pixel[1],
                     pose.x_m,
                     pose.y_m,
                     pose.z_m,
                     state.held_s,
-                    self._calibration.mode,
                 )
 
         return self._decision(inside_workspace, candidate_pixel, calibration_failed, notes)

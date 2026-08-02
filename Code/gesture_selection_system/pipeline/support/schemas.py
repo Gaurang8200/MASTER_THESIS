@@ -1,9 +1,8 @@
 """Shared contracts for the gesture selection system.
 
-Internal state uses dataclasses because it carries numpy masks and is never
-validated twice. Everything that leaves the pipeline as JSON uses Pydantic so
-that a malformed result fails at the boundary instead of inside the robot
-pipeline.
+Internal state uses dataclasses because it is cheap and never validated twice.
+Everything that leaves the pipeline as JSON uses Pydantic so that a malformed
+result fails at the boundary instead of inside the robot pipeline.
 
 Coordinate rule of this package. Gesture detection and object selection stay in
 image coordinates. Robot coordinates appear in exactly one place, the place
@@ -120,44 +119,37 @@ class GestureFrame:
 
 @dataclass(frozen=True)
 class RobotPose:
-    """Cartesian pose in the robot base frame.
+    """Cartesian pose in the robot base frame, in the form UR script expects.
 
-    Position is in meters and orientation is in degrees, which matches the pose
-    format of the existing pick and drop repository.
+    Position is in meters and orientation is a rotation vector in radians, which
+    is what ``movel(p[...])`` takes and what the existing repository already
+    writes in ``final_position``.
     """
 
     x_m: float
     y_m: float
     z_m: float
-    rx_deg: float = 0.0
-    ry_deg: float = 0.0
-    rz_deg: float = 0.0
+    rx: float = 0.0
+    ry: float = 0.0
+    rz: float = 0.0
     frame: str = "robot_base"
 
     def as_list(self) -> list[float]:
-        return [self.x_m, self.y_m, self.z_m, self.rx_deg, self.ry_deg, self.rz_deg]
+        return [self.x_m, self.y_m, self.z_m, self.rx, self.ry, self.rz]
 
 
 @dataclass
 class DetectedObject:
-    """One segmented object supplied by the object detection system.
+    """One object reported by the detector of the existing pick and drop system.
 
-    The mask and the box are in image coordinates. ``pick_pose`` is optional and
-    comes from the object system itself, the gesture module never computes it.
+    The box is in image coordinates. That detector produces boxes and no
+    segmentation masks, so selection works on box containment.
     """
 
     object_id: str
     class_name: str
     confidence: float
     box: BoundingBox
-    mask: np.ndarray | None = None
-    pick_pose: RobotPose | None = None
-
-    def has_mask_for(self, frame_shape: tuple[int, int]) -> bool:
-        """True when the mask is present and matches the frame height and width."""
-        if self.mask is None:
-            return False
-        return self.mask.shape[:2] == frame_shape[:2]
 
 
 @runtime_checkable
@@ -175,10 +167,10 @@ class GestureSource(Protocol):
 
 @runtime_checkable
 class ObjectSource(Protocol):
-    """Object detection and segmentation boundary.
+    """Object detection boundary.
 
-    The mock implementation and the future YOLOv5 adapter both satisfy this,
-    which is the only contract the selection logic depends on.
+    The YOLOv5 adapter of the existing repository satisfies this, and it is the
+    only object contract the selection logic depends on.
     """
 
     def start(self) -> None: ...
@@ -199,9 +191,6 @@ class PlaceCalibration(Protocol):
     def convert_place_pixel_to_robot_pose(
         self, fingertip_pixel: tuple[float, float], frame_shape: tuple[int, int]
     ) -> RobotPose: ...
-
-    @property
-    def mode(self) -> str: ...
 
     def health(self) -> dict[str, object]: ...
 
@@ -232,9 +221,9 @@ class PoseModel(BaseModel):
     x_m: float
     y_m: float
     z_m: float
-    rx_deg: float = 0.0
-    ry_deg: float = 0.0
-    rz_deg: float = 0.0
+    rx: float = 0.0
+    ry: float = 0.0
+    rz: float = 0.0
     frame: str = "robot_base"
 
     @classmethod
@@ -243,9 +232,9 @@ class PoseModel(BaseModel):
             x_m=pose.x_m,
             y_m=pose.y_m,
             z_m=pose.z_m,
-            rx_deg=pose.rx_deg,
-            ry_deg=pose.ry_deg,
-            rz_deg=pose.rz_deg,
+            rx=pose.rx,
+            ry=pose.ry,
+            rz=pose.rz,
             frame=pose.frame,
         )
 
@@ -255,7 +244,6 @@ class FingertipModel(BaseModel):
 
     center_px: PointModel
     confidence: float
-    probe_radius_px: int
     inside_workspace: bool
     pointing_finger_present: bool
 
@@ -268,9 +256,7 @@ class SelectedObjectModel(BaseModel):
     confidence: float
     bbox: BoxModel
     centroid_px: PointModel
-    mask_overlap_px: int
     held_s: float
-    pick_pose: PoseModel | None = None
 
 
 class PlacePointModel(BaseModel):
@@ -278,7 +264,6 @@ class PlacePointModel(BaseModel):
 
     pixel: PointModel
     pose: PoseModel
-    calibration_mode: str
     held_s: float
 
 
@@ -308,6 +293,8 @@ class PipelineOutput(BaseModel):
     schema_version: str = SCHEMA_VERSION
     mode: InteractionMode = InteractionMode.IDLE
     frame_index: int
+    frame_width: int
+    frame_height: int
     timestamp_monotonic_s: float
     selection_mode: SelectionMode
     mode_transition: ModeTransition | None = None

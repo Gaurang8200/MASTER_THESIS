@@ -41,18 +41,7 @@ def draw_objects(
     frame: np.ndarray,
     objects: Sequence[DetectedObject],
     selected_id: str | None,
-    show_masks: bool,
-    mask_alpha: float,
 ) -> np.ndarray:
-    if show_masks and objects:
-        tint = frame.copy()
-        for item in objects:
-            if item.mask is None or item.mask.shape[:2] != frame.shape[:2]:
-                continue
-            color = SELECTED_COLOR if item.object_id == selected_id else OBJECT_COLOR
-            tint[item.mask.astype(bool)] = color
-        cv2.addWeighted(tint, mask_alpha, frame, 1.0 - mask_alpha, 0.0, frame)
-
     for item in objects:
         selected = item.object_id == selected_id
         color = SELECTED_COLOR if selected else OBJECT_COLOR
@@ -69,13 +58,11 @@ def draw_workspace(frame: np.ndarray, polygon: np.ndarray) -> np.ndarray:
 
 
 def draw_fingertip(
-    frame: np.ndarray, center: tuple[float, float], probe_radius: int, marker_radius: int, active: bool
+    frame: np.ndarray, center: tuple[float, float], marker_radius: int, active: bool
 ) -> np.ndarray:
     point = (int(round(center[0])), int(round(center[1])))
     color = GESTURE_COLORS[GestureName.INDEX_FINGERTIP] if active else (150, 150, 150)
     cv2.circle(frame, point, marker_radius, color, 2)
-    if probe_radius > 0:
-        cv2.circle(frame, point, probe_radius, color, 1)
     cv2.drawMarker(frame, point, color, cv2.MARKER_CROSS, 12, 1)
     return frame
 
@@ -126,8 +113,7 @@ def render_pipeline_frame(
     objects: Sequence[DetectedObject],
     gesture_frame: GestureFrame,
     polygon: np.ndarray,
-    show_masks: bool,
-    mask_alpha: float,
+    show_object_boxes: bool,
     show_workspace: bool,
     show_hud: bool,
     marker_radius: int,
@@ -136,7 +122,8 @@ def render_pipeline_frame(
     """Compose the full overlay for one processed frame."""
     canvas = frame.copy()
     selected_id = result.selected_object.object_id if result.selected_object else None
-    draw_objects(canvas, objects, selected_id, show_masks, mask_alpha)
+    if show_object_boxes:
+        draw_objects(canvas, objects, selected_id)
     if show_workspace:
         draw_workspace(canvas, polygon)
     draw_gestures(canvas, gesture_frame)
@@ -144,7 +131,6 @@ def render_pipeline_frame(
         draw_fingertip(
             canvas,
             (result.fingertip.center_px.x, result.fingertip.center_px.y),
-            result.fingertip.probe_radius_px,
             marker_radius,
             result.selection_mode is SelectionMode.ON,
         )
