@@ -1,0 +1,112 @@
+# Gesture selection system configuration.
+# Every path is resolved relative to the gesture_selection_system package root
+# unless the value is already absolute.
+
+model:
+  # YOLO11s Detect weights downloaded from Ultralytics HUB.
+  weights: ../models/best.pt
+  # auto resolves to cuda, then mps, then cpu.
+  device: auto
+  imgsz: 640
+  half: false
+  max_detections: 20
+  # Frames older than this budget are reported as degraded in the pipeline output.
+  latency_budget_ms: 120.0
+
+# Mapping from gesture name to the class index used during training.
+class_ids:
+  open_palm_start: 0
+  closed_palm_stop: 1
+  pointing_finger: 2
+  index_fingertip: 3
+
+confidence:
+  # Palm and pointing gestures drive the mode transitions and need a strong score.
+  gesture: 0.75
+  # The fingertip box is small, so it is allowed a lower score.
+  fingertip: 0.65
+  # Objects below this score never take part in selection.
+  object: 0.70
+
+stability:
+  # How long a gesture has to be held before it counts, in seconds.
+  # Seconds rather than frame counts, so a slow machine behaves like a fast one.
+  activate_seconds: 5.0
+  deactivate_seconds: 5.0
+  select_seconds: 5.0
+  place_seconds: 5.0
+  # Selection mode falls back to off after this long without any gesture.
+  # Set to 0 to disable the timeout.
+  lost_gesture_timeout_seconds: 3.0
+
+selection:
+  # Radius of the fingertip probe circle in pixels. Set to 0 to test the single center pixel.
+  fingertip_radius_px: 8
+  # Minimum number of mask pixels inside the probe circle that counts as a touch.
+  min_mask_overlap_px: 1
+  # A pointing_finger detection must be present together with the fingertip.
+  require_pointing_finger: true
+  # Keep the selected object latched until selection mode turns off or reset is called.
+  hold_selection_until_mode_off: true
+  # A place point is only reported after an object has been selected.
+  require_selection_before_place: true
+  # Any spot inside the table area can be a place point. An object lying there
+  # does not block it.
+  ignore_objects_for_place: true
+
+workspace:
+  # Calibrated table area in normalized image coordinates, clockwise.
+  # Values are fractions of width and height so the polygon follows the frame size.
+  normalized_polygon:
+    - [0.08, 0.30]
+    - [0.92, 0.30]
+    - [0.92, 0.96]
+    - [0.08, 0.96]
+
+# Calibration is used only to turn a place pixel into a robot coordinate.
+# Gesture classification and fingertip to mask object selection stay in image
+# coordinates and never read this section.
+place_calibration:
+  # mock is a placeholder for development.
+  # existing_repo calls the pixel to robot conversion of the existing pick and drop repository.
+  mode: mock
+  mock:
+    # Robot coordinate of the image origin in meters.
+    origin_m: [0.30, -0.25]
+    # Meters per pixel along image x and image y.
+    meters_per_pixel: [0.0009, 0.0009]
+    # Fixed height and tool orientation used for the placeholder place pose.
+    place_z_m: 0.05
+    orientation_deg: [180.0, 0.0, 0.0]
+  existing_repo:
+    # Directory that holds function_pool.py and the calibration json files.
+    repo_path: "../../Object-Detection-Using-YOLO-v5-main 2"
+    wp2camera_json: output_wp2camera.json
+    c2f_json: output_c2f.json
+    robot_poses_json: robot_poses.json
+    # Index of the robot pose used during the calibration recording.
+    pose_index: 15
+    # Resolution the calibration was recorded at. Camera pixels are scaled into
+    # this resolution before the existing transform is applied.
+    calibration_resolution: [2560, 1472]
+    # Clearance added on top of the table height returned by the transform.
+    place_z_offset_m: 0.0
+    # Used when the orientation cannot be derived from the existing transform.
+    fallback_orientation_deg: [180.0, 0.0, 0.0]
+
+camera:
+  index: 0
+  width: 1280
+  height: 720
+  # Mirror the preview so that moving the hand right moves the overlay right.
+  flip_horizontal: true
+
+visualization:
+  show_masks: true
+  mask_alpha: 0.35
+  show_workspace: true
+  show_hud: true
+  fingertip_marker_radius_px: 10
+
+logging:
+  level: INFO

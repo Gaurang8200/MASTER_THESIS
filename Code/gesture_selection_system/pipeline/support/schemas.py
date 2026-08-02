@@ -1,0 +1,336 @@
+"""Shared contracts for the gesture selection system.
+
+Internal state uses dataclasses because it carries numpy masks and is never
+validated twice. Everything that leaves the pipeline as JSON uses Pydantic so
+that a malformed result fails at the boundary instead of inside the robot
+pipeline.
+
+Coordinate rule of this package. Gesture detection and object selection stay in
+image coordinates. Robot coordinates appear in exactly one place, the place
+pose, which is produced by the calibration of the existing pick and drop
+repository.
+"""
+
+from __future__ import annotations
+
+import sys
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Protocol, Sequence, runtime_checkable
+
+import numpy as np
+from pydantic import BaseModel, ConfigDict, Field
+
+_COMMON_DIR = Path(__file__).resolve().parents[2] / "common"
+if str(_COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(_COMMON_DIR))
+
+from gesture_classes import GestureName  # noqa: E402  shared with the training folder
+
+SCHEMA_VERSION = "1.1"
+
+
+class SelectionMode(str, Enum):
+    OFF = "off"
+    ON = "on"
+
+
+class ModeTransition(str, Enum):
+    ACTIVATED = "activated"
+    DEACTIVATED = "deactivated"
+
+
+class InteractionMode(str, Enum):
+    """What the operator has achieved in the current frame."""
+
+    IDLE = "idle"
+    OBJECT_SELECTION = "object_selection"
+    PLACE_SELECTION = "place_selection"
+
+
+@dataclass(frozen=True)
+class BoundingBox:
+    """Axis aligned box in pixel coordinates of the processed frame."""
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+    def __post_init__(self) -> None:
+        if self.x2 < self.x1 or self.y2 < self.y1:
+            raise ValueError(f"invalid bounding box ordering: {self}")
+
+    @property
+    def width(self) -> float:
+        return self.x2 - self.x1
+
+    @property
+    def height(self) -> float:
+        return self.y2 - self.y1
+
+    @property
+    def area(self) -> float:
+        return self.width * self.height
+
+    @property
+    def center(self) -> tuple[float, float]:
+        return (self.x1 + self.x2) / 2.0, (self.y1 + self.y2) / 2.0
+
+    def clipped(self, width: int, height: int) -> "BoundingBox":
+        return BoundingBox(
+            x1=float(min(max(self.x1, 0.0), width)),
+            y1=float(min(max(self.y1, 0.0), height)),
+            x2=float(min(max(self.x2, 0.0), width)),
+            y2=float(min(max(self.y2, 0.0), height)),
+        )
+
+    def as_int_tuple(self) -> tuple[int, int, int, int]:
+        return int(round(self.x1)), int(round(self.y1)), int(round(self.x2)), int(round(self.y2))
+
+
+@dataclass(frozen=True)
+class GestureDetection:
+    gesture: GestureName
+    confidence: float
+    box: BoundingBox
+
+
+@dataclass(frozen=True)
+class GestureFrame:
+    """Result of one detector call, entirely in image coordinates.
+
+    An unhealthy frame keeps ``ok`` false so that downstream policy can fail
+    closed instead of acting on an empty detection list that looks valid.
+    """
+
+    frame_index: int
+    detections: tuple[GestureDetection, ...] = ()
+    latency_ms: float = 0.0
+    ok: bool = True
+    error: str | None = None
+
+    def all_of(self, gesture: GestureName) -> list[GestureDetection]:
+        return [d for d in self.detections if d.gesture is gesture]
+
+    def best(self, gesture: GestureName) -> GestureDetection | None:
+        candidates = self.all_of(gesture)
+        if not candidates:
+            return None
+        return max(candidates, key=lambda d: d.confidence)
+
+    def has(self, gesture: GestureName) -> bool:
+        return any(d.gesture is gesture for d in self.detections)
+
+
+@dataclass(frozen=True)
+class RobotPose:
+    """Cartesian pose in the robot base frame.
+
+    Position is in meters and orientation is in degrees, which matches the pose
+    format of the existing pick and drop repository.
+    """
+
+    x_m: float
+    y_m: float
+    z_m: float
+    rx_deg: float = 0.0
+    ry_deg: float = 0.0
+    rz_deg: float = 0.0
+    frame: str = "robot_base"
+
+    def as_list(self) -> list[float]:
+        return [self.x_m, self.y_m, self.z_m, self.rx_deg, self.ry_deg, self.rz_deg]
+
+
+@dataclass
+class DetectedObject:
+    """One segmented object supplied by the object detection system.
+
+    The mask and the box are in image coordinates. ``pick_pose`` is optional and
+    comes from the object system itself, the gesture module never computes it.
+    """
+
+    object_id: str
+    class_name: str
+    confidence: float
+    box: BoundingBox
+    mask: np.ndarray | None = None
+    pick_pose: RobotPose | None = None
+
+    def has_mask_for(self, frame_shape: tuple[int, int]) -> bool:
+        """True when the mask is present and matches the frame height and width."""
+        if self.mask is None:
+            return False
+        return self.mask.shape[:2] == frame_shape[:2]
+
+
+@runtime_checkable
+class GestureSource(Protocol):
+    """Any gesture detector the pipeline can run on, real or faked in tests."""
+
+    def start(self) -> None: ...
+
+    def detect(self, frame: np.ndarray, frame_index: int) -> GestureFrame: ...
+
+    def close(self) -> None: ...
+
+    def health(self) -> dict[str, object]: ...
+
+
+@runtime_checkable
+class ObjectSource(Protocol):
+    """Object detection and segmentation boundary.
+
+    The mock implementation and the future YOLOv5 adapter both satisfy this,
+    which is the only contract the selection logic depends on.
+    """
+
+    def start(self) -> None: ...
+
+    def get_objects(self, frame: np.ndarray) -> Sequence[DetectedObject]: ...
+
+    def close(self) -> None: ...
+
+    def health(self) -> dict[str, object]: ...
+
+
+@runtime_checkable
+class PlaceCalibration(Protocol):
+    """Pixel to robot conversion, used for the place point and nothing else."""
+
+    def start(self) -> None: ...
+
+    def convert_place_pixel_to_robot_pose(
+        self, fingertip_pixel: tuple[float, float], frame_shape: tuple[int, int]
+    ) -> RobotPose: ...
+
+    @property
+    def mode(self) -> str: ...
+
+    def health(self) -> dict[str, object]: ...
+
+
+class PointModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x: float
+    y: float
+
+
+class BoxModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+    @classmethod
+    def from_box(cls, box: BoundingBox) -> "BoxModel":
+        return cls(x1=box.x1, y1=box.y1, x2=box.x2, y2=box.y2)
+
+
+class PoseModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    x_m: float
+    y_m: float
+    z_m: float
+    rx_deg: float = 0.0
+    ry_deg: float = 0.0
+    rz_deg: float = 0.0
+    frame: str = "robot_base"
+
+    @classmethod
+    def from_pose(cls, pose: RobotPose) -> "PoseModel":
+        return cls(
+            x_m=pose.x_m,
+            y_m=pose.y_m,
+            z_m=pose.z_m,
+            rx_deg=pose.rx_deg,
+            ry_deg=pose.ry_deg,
+            rz_deg=pose.rz_deg,
+            frame=pose.frame,
+        )
+
+
+class FingertipModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    center_px: PointModel
+    confidence: float
+    probe_radius_px: int
+    inside_workspace: bool
+    pointing_finger_present: bool
+
+
+class SelectedObjectModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    object_id: str
+    class_name: str
+    confidence: float
+    bbox: BoxModel
+    centroid_px: PointModel
+    mask_overlap_px: int
+    held_s: float
+    pick_pose: PoseModel | None = None
+
+
+class PlacePointModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pixel: PointModel
+    pose: PoseModel
+    calibration_mode: str
+    held_s: float
+
+
+class LatencyModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    gesture_ms: float
+    objects_ms: float
+    total_ms: float
+    budget_ms: float
+    within_budget: bool
+
+
+class PipelineOutput(BaseModel):
+    """The structured result of one processed frame.
+
+    ``calibration_used`` tells the caller whether a robot coordinate is part of
+    this result. It is false for every object selection, because that decision
+    is made purely in image coordinates.
+
+    This module never sends a command, so ``safe_to_execute`` is advice for the
+    caller and not a promise that a motion was started.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = SCHEMA_VERSION
+    mode: InteractionMode = InteractionMode.IDLE
+    frame_index: int
+    timestamp_monotonic_s: float
+    selection_mode: SelectionMode
+    mode_transition: ModeTransition | None = None
+    calibration_used: bool = False
+    fingertip_pixel: list[float] | None = None
+    selected_object_id: str | None = None
+    place_pixel: list[float] | None = None
+    place_robot_pose: list[float] | None = None
+    fingertip: FingertipModel | None = None
+    selected_object: SelectedObjectModel | None = None
+    place_point: PlacePointModel | None = None
+    candidate_object_id: str | None = None
+    latency: LatencyModel
+    degraded: bool = False
+    safe_to_execute: bool = False
+    robot_command_dispatched: bool = False
+    notes: list[str] = Field(default_factory=list)
+
+    def to_json(self, indent: int | None = 2) -> str:
+        return self.model_dump_json(indent=indent)
