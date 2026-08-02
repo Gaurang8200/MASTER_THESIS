@@ -13,20 +13,14 @@ repository.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Protocol, Sequence, runtime_checkable
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
-_COMMON_DIR = Path(__file__).resolve().parents[2] / "common"
-if str(_COMMON_DIR) not in sys.path:
-    sys.path.insert(0, str(_COMMON_DIR))
-
-from gesture_classes import GestureName  # noqa: E402  shared with the training folder
+from gesture_classes import GestureName
 
 SCHEMA_VERSION = "1.1"
 

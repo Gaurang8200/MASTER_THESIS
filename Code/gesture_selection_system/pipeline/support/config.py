@@ -7,7 +7,6 @@ threshold fails at startup instead of during a live robot session.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Literal
 
@@ -15,21 +14,33 @@ import numpy as np
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from gesture_classes import CLASS_IDS, GestureName
+
 PIPELINE_ROOT = Path(__file__).resolve().parents[1]
-_COMMON_DIR = PIPELINE_ROOT.parent / "common"
-if str(_COMMON_DIR) not in sys.path:
-    sys.path.insert(0, str(_COMMON_DIR))
-
-from device import resolve_device  # noqa: E402,F401  re-exported for the detector
-from gesture_classes import CLASS_IDS, GestureName  # noqa: E402
-from paths import resolve_under  # noqa: E402
-
 DEFAULT_CONFIG_PATH = PIPELINE_ROOT / "configs" / "gesture_config.yaml"
 
 
 def resolve_path(value: str | Path) -> Path:
     """Resolve a configured path against the pipeline folder when it is relative."""
-    return resolve_under(PIPELINE_ROOT, value)
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return (PIPELINE_ROOT / path).resolve()
+
+
+def resolve_device(requested: str) -> str:
+    """Pick an inference device, falling back to cpu when nothing else is usable."""
+    if requested != "auto":
+        return requested
+    try:
+        import torch
+    except ImportError:
+        return "cpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 class ModelConfig(BaseModel):

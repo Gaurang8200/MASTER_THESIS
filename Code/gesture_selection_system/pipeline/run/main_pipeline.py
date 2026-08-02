@@ -32,9 +32,6 @@ for _folder in ("support", "detection", "logic", "integration"):
     _path = str(PIPELINE_ROOT / _folder)
     if _path not in sys.path:
         sys.path.insert(0, _path)
-_COMMON = str(PIPELINE_ROOT.parent / "common")
-if _COMMON not in sys.path:
-    sys.path.insert(0, _COMMON)
 
 
 from config import GestureConfig, load_config

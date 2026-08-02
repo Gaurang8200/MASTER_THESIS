@@ -1,7 +1,8 @@
 """Single source of truth for the gesture classes.
 
-Training and the runtime pipeline both import this module, so the class order in
-the dataset can never drift away from the class order the detector assumes.
+The order here is the order the model was trained on. The configuration loader
+and the detector both check against it, so a checkpoint trained on a different
+order is rejected instead of quietly reading an open palm as a fingertip.
 """
 
 from __future__ import annotations
