@@ -1,0 +1,21 @@
+# Usage: pip install -r requirements.txt
+
+# speech to text
+openai-whisper
+SpeechRecognition
+pyaudio
+
+# information extraction
+
+# lokal:
+# accelerate
+# transformers>=4.43.0
+# bitsandbytes
+# psutil
+# huggingface_hub
+
+# api:
+openai
+
+# allg
+python-dotenv

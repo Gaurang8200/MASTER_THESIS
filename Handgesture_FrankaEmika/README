@@ -1,0 +1,17 @@
+# Software
+- pyenv 2.6.8
+- pyenv-virtualenv 1.2.4
+- python 3.10.15 (Verwaltet über pyenv)
+- installierte Pakete in requirements.txt
+
+# Virtuelle Umgebung (Verwaltet über pyenv-virtualenv)
+- pyenv activate handtracking
+
+# Start
+- Kamerakalibrierungsdaten müssen auf aktuellen Stand sein.
+- Verbindung zum Roboter muss hergestellt sein.
+- Skript "HandGesture_Pointer_Beamer_Final.py" ausführen.
+- Roboter in main-position bringen (Abfrage erfolgt zu Beginn über Terminal)
+- Handgeste zum beginnen der Aufzeichnung: Zeige- und Mittelfinger ausgestreckt, restliche Finger eingeklappt
+- Punkte markieren: Zeigefinger auf gewünschte Position bewegen, anschließend Mittelfinger zur Bestätigung ausstrecken
+- Aufzeichnung beenden: Alle Finger einklappen (Faust machen)t is powere
