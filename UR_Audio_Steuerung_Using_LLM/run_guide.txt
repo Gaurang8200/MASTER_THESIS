@@ -1,0 +1,19 @@
+1. venv -  aktivieren 
+    cd "C:\develop\UR_Audio_Steuerung_Using_LLM"
+    venv_wrapper\Scripts\activate
+
+    
+2. run application
+    python application_multi_object.py
+
+
+
+Hinweise:
+
+- kamera in windows einstellungen aktivieren/ datenschutz etc
+- ip check (192.168.2.180)
+
+- Falls ffmpeg nach neuinstallation nicht gefunden: nach venv aktivierung dieser Befehl:
+
+$env:PATH = "$PWD\tools\ffmpeg\ffmpeg-2025-05-05-git-f4e72eb5a3-full_build\bin;" + $env:PATH
+
