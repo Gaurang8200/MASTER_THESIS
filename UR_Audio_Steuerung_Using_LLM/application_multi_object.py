@@ -41,7 +41,7 @@ def get_yolo_python():
    
    for candidate in candidates:
        try:
-           result = subprocess.run([candidate, '--version'], 
+           result = subprocess.run([candidate, '--version'],
                                  capture_output=True, text=True, timeout=5)
            if result.returncode == 0:
                print(f"INFO: Using Python executable: {candidate}")
@@ -50,6 +50,22 @@ def get_yolo_python():
            continue
    print("WARNING: Falling back to system Python")
    return 'python'
+
+def get_pre_venv_python():
+   """Path to the Code-YOLOv5-Windows_llm venv interpreter for the current OS.
+
+   Detection needs the pinned cv2/torch versions in that subproject's own
+   venv, so prefer its Windows or Unix layout, whichever exists on disk.
+   The venv there is currently Windows only, so on macOS/Linux it falls
+   back to get_yolo_python(), which probes for a working interpreter.
+   """
+   windows_python = os.path.join(PRE, "venv", "Scripts", "python.exe")
+   unix_python = os.path.join(PRE, "venv", "bin", "python")
+   if os.name == "nt" and os.path.exists(windows_python):
+       return windows_python
+   if os.name != "nt" and os.path.exists(unix_python):
+       return unix_python
+   return get_yolo_python()
 
 YOLO_PYTHON = get_yolo_python()
 
@@ -193,7 +209,7 @@ def capture_and_detect_objects():
            output_text.insert(tk.END, f"SIMULATION: Copied to: {photo_path}\n")
            detection_script = os.path.join(PRE, "detection_multi.py")
            # Use the PRE venv Python for correct cv2 environment
-           PRE_PYTHON = os.path.join(PRE, "venv", "Scripts", "python.exe")
+           PRE_PYTHON = get_pre_venv_python()
            output_text.insert(tk.END, f"SIMULATION: Running detection with Python: {PRE_PYTHON}\n")
            output_text.insert(tk.END, f"SIMULATION: Detection script: {detection_script}\n")
            result = subprocess.run(
@@ -226,7 +242,7 @@ def capture_and_detect_objects():
            output_text.insert(tk.END, "CAMERA: Using real camera for detection\n")
            detection_script = os.path.join(PRE, "detection_multi.py")
            # Use the PRE venv Python for correct cv2 environment
-           PRE_PYTHON = os.path.join(PRE, "venv", "Scripts", "python.exe")
+           PRE_PYTHON = get_pre_venv_python()
            output_text.insert(tk.END, f"REAL: Running detection with Python: {PRE_PYTHON}\n")
            output_text.insert(tk.END, f"REAL: Detection script: {detection_script}\n")
            result = subprocess.run(
