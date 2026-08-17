@@ -51,20 +51,25 @@ def get_yolo_python():
    print("WARNING: Falling back to system Python")
    return 'python'
 
-def get_pre_venv_python():
-   """Path to the Code-YOLOv5-Windows_llm venv interpreter for the current OS.
+def get_pre_venv_python(platform_choice="windows"):
+   """Path to the Code-YOLOv5-Windows_llm venv interpreter for the chosen platform.
 
    Detection needs the pinned cv2/torch versions in that subproject's own
-   venv, so prefer its Windows or Unix layout, whichever exists on disk.
-   The venv there is currently Windows only, so on macOS/Linux it falls
-   back to get_yolo_python(), which probes for a working interpreter.
+   venv. platform_choice comes from the Path Select control so the user
+   picks Windows, macOS or Linux explicitly instead of relying on
+   auto-detection. Windows keeps its original hardcoded path unchanged.
+   Falls back to get_yolo_python() when that venv layout is not present,
+   which is always true for macOS/Linux right now since the venv there
+   was created on Windows.
    """
-   windows_python = os.path.join(PRE, "venv", "Scripts", "python.exe")
-   unix_python = os.path.join(PRE, "venv", "bin", "python")
-   if os.name == "nt" and os.path.exists(windows_python):
-       return windows_python
-   if os.name != "nt" and os.path.exists(unix_python):
-       return unix_python
+   platform_python_paths = {
+       "windows": os.path.join(PRE, "venv", "Scripts", "python.exe"),
+       "mac": os.path.join(PRE, "venv", "bin", "python"),
+       "linux": os.path.join(PRE, "venv", "bin", "python"),
+   }
+   candidate = platform_python_paths.get(platform_choice)
+   if candidate and os.path.exists(candidate):
+       return candidate
    return get_yolo_python()
 
 YOLO_PYTHON = get_yolo_python()
@@ -209,7 +214,7 @@ def capture_and_detect_objects():
            output_text.insert(tk.END, f"SIMULATION: Copied to: {photo_path}\n")
            detection_script = os.path.join(PRE, "detection_multi.py")
            # Use the PRE venv Python for correct cv2 environment
-           PRE_PYTHON = get_pre_venv_python()
+           PRE_PYTHON = get_pre_venv_python(platform_select.get())
            output_text.insert(tk.END, f"SIMULATION: Running detection with Python: {PRE_PYTHON}\n")
            output_text.insert(tk.END, f"SIMULATION: Detection script: {detection_script}\n")
            result = subprocess.run(
@@ -242,7 +247,7 @@ def capture_and_detect_objects():
            output_text.insert(tk.END, "CAMERA: Using real camera for detection\n")
            detection_script = os.path.join(PRE, "detection_multi.py")
            # Use the PRE venv Python for correct cv2 environment
-           PRE_PYTHON = get_pre_venv_python()
+           PRE_PYTHON = get_pre_venv_python(platform_select.get())
            output_text.insert(tk.END, f"REAL: Running detection with Python: {PRE_PYTHON}\n")
            output_text.insert(tk.END, f"REAL: Detection script: {detection_script}\n")
            result = subprocess.run(
@@ -919,6 +924,13 @@ ttk.Label(left_frame, text="Execution Mode:").pack(anchor="w", pady=(10,0), padx
 exec_mode = tk.StringVar(app, value="simulate")
 ttk.Radiobutton(left_frame, text="Simulate", variable=exec_mode, value="simulate").pack(anchor="w", padx=20)
 ttk.Radiobutton(left_frame, text="Real Robot", variable=exec_mode, value="real").pack(anchor="w", padx=20)
+
+ttk.Label(left_frame, text="Path Select:").pack(anchor="w", pady=(10,0), padx=10)
+default_platform = "windows" if os.name == "nt" else ("mac" if sys.platform == "darwin" else "linux")
+platform_select = tk.StringVar(app, value=default_platform)
+ttk.Radiobutton(left_frame, text="Windows", variable=platform_select, value="windows").pack(anchor="w", padx=20)
+ttk.Radiobutton(left_frame, text="macOS", variable=platform_select, value="mac").pack(anchor="w", padx=20)
+ttk.Radiobutton(left_frame, text="Linux", variable=platform_select, value="linux").pack(anchor="w", padx=20)
 
 ttk.Label(left_frame, text="Select Microphone:").pack(pady=(10,0))
 mic_names   = sr.Microphone.list_microphone_names()
