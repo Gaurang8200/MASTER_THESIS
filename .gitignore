@@ -21,6 +21,10 @@ Code/Object-Detection-Using-YOLO-v5-main 2/get-pip.py
 # Snapshot captures, virtualenvs, weights and datasets for the new subprojects
 Handgesture_FrankaEmika/snapshots/
 UR_Audio_Steuerung_Using_LLM/venv_wrapper/
-UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/venv/
-UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/work/
-UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/log/
+UR_Audio_Steuerung_Using_LLM/models/
+UR_Audio_Steuerung_Using_LLM/data/
+UR_Audio_Steuerung_Using_LLM/tools/ffmpeg/
+UR_Audio_Steuerung_Using_LLM/tools/flac/
+
+# Whole vendored fork with its own git history and remote, not a submodule
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/
