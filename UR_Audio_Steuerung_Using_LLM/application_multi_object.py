@@ -25,6 +25,7 @@ import threading
 # Multi-Object System Imports
 from src.speech.speech_to_text_local import SpeechToTextLocal
 from src.speech.information_extraction_openai_api_multi import InformationExtractionOpenAIMulti
+from src.detection_preparation import prepare_robot_for_detection
 from src.robot_method_selector_multi import select_robot_methods_multi, select_target_object
 from src.zone_coordinates import get_zone_coordinates
 
@@ -229,12 +230,13 @@ def capture_and_detect_objects():
            output_text.insert(tk.END, "REAL: Setting detection mode to real camera\n")
            
            # Realmodus: Roboter in Ausgangsposition fahren und echte Kamera verwenden
-           output_text.insert(tk.END, "REAL: Moving robot to main position before detection\n")
+           output_text.insert(tk.END, "REAL: Preparing selected robot for detection\n")
            try:
-               from src.robot_control import move_to_main_position
-               move_to_main_position(robot_ip.get())
+               prepare_robot_for_detection(robot_type.get(), robot_ip.get())
            except Exception as e:
-               output_text.insert(tk.END, f"ERROR: move_to_main_position failed: {e}\n")
+               output_text.insert(tk.END, f"ERROR: Robot detection preparation failed: {e}\n")
+               update_workflow_status(WorkflowStatus.READY_FOR_DETECTION)
+               return
 
            # Clear photos directory
            photos_dir = os.path.join(PRE, "photos")

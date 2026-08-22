@@ -338,5 +338,24 @@ def execute_franka_workflow(
         perception_steps.set_simulation_mode(False, None)
 
 
+def prepare_franka_for_detection(robot_ip: str | None = None) -> None:
+    config = load_franka_config()
+    if robot_ip and robot_ip.strip():
+        config = FrankaConfig(**{**config.__dict__, "robot_ip": robot_ip.strip()})
+    arm = FrankaRobotArm(
+        config.robot_ip,
+        config.dynamics_factor,
+        config.gripper_speed,
+        config.gripper_force,
+    )
+    try:
+        arm.start()
+        if not arm.health():
+            raise RuntimeError("Franka robot health check failed")
+        arm.move_joints(config.home_joints)
+    finally:
+        arm.close()
+
+
 def _read_detection_image_size() -> tuple[int, int]:
     return read_detection_image_size(TXT_DIR, YOLO_ROOT)
