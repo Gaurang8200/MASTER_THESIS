@@ -25,3 +25,5 @@ python-dotenv
 franky-control==1.1.2
 numpy
 opencv-python
+scipy
+sympy

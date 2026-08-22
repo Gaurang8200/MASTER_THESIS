@@ -1,14 +1,11 @@
 # MO_Changes
 from __future__ import annotations
 
-import json
 import math
 from typing import Sequence
 
 import numpy as np
 
-from .calibration import _euler_zyx_matrix
-from .config import FrankaConfig
 from .models import CartesianPose
 
 
@@ -56,18 +53,3 @@ def rotation_vector_to_quaternion(vector: Sequence[float]) -> tuple[float, float
         (0.0, 0.0, 0.0),
         (axis[0] * sine, axis[1] * sine, axis[2] * sine, math.cos(angle / 2.0)),
     ).quaternion
-
-
-def calibration_pose_15(config: FrankaConfig) -> CartesianPose:
-    pose_data = json.loads(
-        (config.calibration_dir / "robot_poses.json").read_text(encoding="utf-8")
-    )["Posen"]["p15"]
-    rotation = _euler_zyx_matrix((pose_data["a"], pose_data["b"], pose_data["c"]))
-    return CartesianPose.create(
-        (
-            float(pose_data["x"]) / 1000.0,
-            float(pose_data["y"]) / 1000.0,
-            float(pose_data["z"]) / 1000.0,
-        ),
-        rotation_matrix_to_quaternion(rotation),
-    )

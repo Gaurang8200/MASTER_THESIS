@@ -1,0 +1,23 @@
+{
+    "opencv_storage" : {
+        "settings" : {
+            "BoardSize_Rows": 9,
+            "BoardSize_Columns": 7,
+            "Square_Size": 20,
+			"Dist_Between_Centers" : 10,
+            "Calibrate_Pattern": "CHESSBOARD",
+            "Input": "Images",
+            "Images_Folder": "images",
+            "Images_Folder2": "undistortion",
+            "Input_FlipAroundHorizontalAxis": 0,
+            "Input_Delay": 100,
+            "Calibrate_NrOfFrameToUse": 25,
+            "Calibrate_FixAspectRatio": 1 ,
+            "Calibrate_AssumeZeroTangentialDistortion": 1,
+            "Calibrate_FixPrincipalPointAtTheCenter": 1 ,
+            "Write_DetectedFeaturePoints": 1,
+            "Write_extrinsicParameters": 1,
+            "Show_UndistortedImage": 1
+        }
+    }
+}
