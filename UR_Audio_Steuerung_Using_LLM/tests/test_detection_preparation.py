@@ -4,10 +4,18 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from src.detection_preparation import prepare_robot_for_detection
+from src.detection_preparation import get_default_robot_ip, prepare_robot_for_detection
 
 
 class DetectionPreparationTest(unittest.TestCase):
+    def test_each_robot_type_has_its_own_default_ip(self) -> None:
+        self.assertEqual(get_default_robot_ip("franka"), "172.16.0.2")
+        self.assertEqual(get_default_robot_ip("universal"), "192.168.2.180")
+
+    def test_unknown_robot_type_has_no_default_ip(self) -> None:
+        with self.assertRaises(ValueError):
+            get_default_robot_ip("unknown")
+
     @patch("src.detection_preparation.move_to_main_position")
     @patch("src.detection_preparation.prepare_franka_for_detection")
     def test_franka_selection_uses_only_franka_preparation(

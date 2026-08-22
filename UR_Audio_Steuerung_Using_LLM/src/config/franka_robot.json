@@ -12,13 +12,31 @@
     "1": 0.03,
     "2": 0.02
   },
+  "place_heights": {
+    "0": 0.067,
+    "1": 0.048,
+    "2": 0.040
+  },
   "default_orientation": [1.0, 0.0, 0.0, 0.0],
   "calibration_image_size": [1280, 720],
   "mirror_x": false,
   "workspace": {
     "x": [0.1, 0.75],
-    "y": [-0.1, 0.65],
+    "y": [-0.146, 0.65],
     "z": [-0.05, 0.5]
   },
-  "zones": {}
+  "zones": {
+    "Zone_1": {
+      "translation": [0.366, -0.146, 0.067],
+      "quaternion": [1.0, 0.0, 0.0, 0.0]
+    },
+    "Zone_2": {
+      "translation": [0.366, -0.008, 0.048],
+      "quaternion": [1.0, 0.0, 0.0, 0.0]
+    },
+    "Zone_3": {
+      "translation": [0.366, 0.121, 0.040],
+      "quaternion": [1.0, 0.0, 0.0, 0.0]
+    }
+  }
 }
