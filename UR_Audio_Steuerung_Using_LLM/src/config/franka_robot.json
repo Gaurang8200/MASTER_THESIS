@@ -1,0 +1,24 @@
+{
+  "robot_ip": "172.16.0.2",
+  "dynamics_factor": 0.05,
+  "gripper_speed": 0.02,
+  "gripper_force": 20.0,
+  "home_joints": [0.13702847, -0.2575123, 0.5149722, -1.97199728, 0.14447674, 1.71555068, 1.40325516],
+  "intermediate_joints": [0.13702847, -0.2575123, 0.5149722, -1.97199728, 0.14447674, 1.71555068, 1.40325516],
+  "approach_height": 0.2,
+  "lift_height": 0.2,
+  "pick_heights": {
+    "0": 0.05,
+    "1": 0.03,
+    "2": 0.02
+  },
+  "default_orientation": [1.0, 0.0, 0.0, 0.0],
+  "calibration_image_size": [1280, 720],
+  "mirror_x": false,
+  "workspace": {
+    "x": [0.1, 0.75],
+    "y": [-0.1, 0.65],
+    "z": [-0.05, 0.5]
+  },
+  "zones": {}
+}

@@ -1,3 +1,4 @@
+# MO_Changes
 import os
 import sys
 import shutil
@@ -489,15 +490,19 @@ def execute_workflow_handler():
             output_text.insert("end", "ROBOT REAL: Executing on real robot...\n")
             
             try:
-                # Import robot control here to avoid circular imports
-                from src.robot_control import execute_robot_workflow, move_to_selected_object
-                
-                # **REMOVED: Doppelte Bewegung - wird bereits im Workflow ausgeführt**
-                # move_to_selected_object(robot_ip.get()) 
-                
-                # Execute the robot workflow
                 output_text.insert("end", "ROBOT REAL: Starting robot workflow...\n")
-                execute_robot_workflow(robot_ip.get(), robot_methods)
+                if robot_type.get() == "franka":
+                    from src.franka import execute_franka_workflow
+
+                    execute_franka_workflow(
+                        robot_methods,
+                        robot_ip=robot_ip.get(),
+                        simulation=False,
+                    )
+                else:
+                    from src.robot_control import execute_robot_workflow
+
+                    execute_robot_workflow(robot_ip.get(), robot_methods)
                 output_text.insert("end", " ROBOT REAL: Workflow successfully completed!\n")
                 
                 # Workflow erfolgreich beendet - keine finale Detection
@@ -514,12 +519,22 @@ def execute_workflow_handler():
             output_text.insert("end", "SIMULATION: Starting workflow simulation...\n")
             
             try:
-                from src.robot_control import execute_robot_workflow_simulation, move_to_selected_object
-                
                 output_text.insert("end", "SIMULATION: Starting workflow simulation...\n")
-                execute_robot_workflow_simulation(
-                    robot_ip.get(), robot_methods, simulation_output_callback
-                )
+                if robot_type.get() == "franka":
+                    from src.franka import execute_franka_workflow
+
+                    execute_franka_workflow(
+                        robot_methods,
+                        robot_ip=robot_ip.get(),
+                        simulation=True,
+                        output_callback=simulation_output_callback,
+                    )
+                else:
+                    from src.robot_control import execute_robot_workflow_simulation
+
+                    execute_robot_workflow_simulation(
+                        robot_ip.get(), robot_methods, simulation_output_callback
+                    )
                 output_text.insert("end", " SIMULATION: Workflow simulation completed successfully!\n")
                 update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
             except Exception as sim_error:
@@ -911,8 +926,13 @@ workflow_help = ttk.Label(
 )
 workflow_help.pack()
 
+ttk.Label(left_frame, text="Robot Type:").pack(anchor="w", pady=(10,0), padx=10)
+robot_type = tk.StringVar(app, value="franka")
+ttk.Radiobutton(left_frame, text="Franka Emika", variable=robot_type, value="franka").pack(anchor="w", padx=20)
+ttk.Radiobutton(left_frame, text="Universal Robot", variable=robot_type, value="universal").pack(anchor="w", padx=20)
+
 ttk.Label(left_frame, text="Enter Robot IP:").pack(pady=(10,0))
-robot_ip = tk.StringVar(app, value="192.168.2.180")
+robot_ip = tk.StringVar(app, value="172.16.0.2")
 ttk.Entry(left_frame, textvariable=robot_ip, width=20).pack(pady=(0,10))
 
 ttk.Label(left_frame, text="Befehlstyp:").pack(anchor="w", pady=(10,0), padx=10)
