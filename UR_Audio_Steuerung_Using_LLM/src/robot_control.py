@@ -33,12 +33,11 @@ def set_simulation_mode(enabled=True, output_callback=None):
     simulation_mode = enabled
     simulation_output_callback = output_callback
 
-def sim_print(message):
-    """Print to simulation output if callback is available"""
-    if simulation_output_callback:
+def sim_print(message: str) -> None:
+    """Print simulation output to the terminal and optional interface."""
+    print(message)
+    if simulation_output_callback and simulation_output_callback is not print:
         simulation_output_callback(message + "\n")
-    else:
-        print(message)
 
 # URScript‐Sende‐Funktion
 def send_urscript(script, host):

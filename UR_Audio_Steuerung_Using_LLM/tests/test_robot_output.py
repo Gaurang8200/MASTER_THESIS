@@ -32,7 +32,10 @@ class RobotOutputTest(unittest.TestCase):
             predecessor = Path(directory)
             txt_directory = predecessor / "txt_file"
             txt_directory.mkdir()
-            with patch.object(robot_control, "PREDECESSOR_DIR", str(predecessor)):
+            with (
+                patch.object(robot_control, "PREDECESSOR_DIR", str(predecessor)),
+                patch("builtins.print") as terminal_print,
+            ):
                 robot_control.set_simulation_mode(True, messages.append)
                 try:
                     result = robot_control.convert_pixel_to_robot_multi(1280, 720)
@@ -47,6 +50,12 @@ class RobotOutputTest(unittest.TestCase):
         self.assertEqual(coordinates, "0.300000\n-0.050000\n")
         self.assertTrue(
             any("SIMULATION COORDINATE RESULT" in message for message in messages)
+        )
+        self.assertTrue(
+            any(
+                call.args and "SIMULATION COORDINATE RESULT" in call.args[0]
+                for call in terminal_print.call_args_list
+            )
         )
 
 
