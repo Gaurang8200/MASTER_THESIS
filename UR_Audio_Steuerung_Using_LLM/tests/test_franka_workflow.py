@@ -39,6 +39,12 @@ class FrankaWorkflowTest(unittest.TestCase):
         for object_class, height in OBJECT_PLACE_HEIGHTS.items():
             with self.subTest(object_class=object_class):
                 self.assertEqual(config.place_height(object_class), height)
+        self.assertEqual(config.approach_height, 0.5)
+        self.assertEqual(config.camera_offset, (0.084, 0.0, 0.0))
+        self.assertEqual(config.lift_height, 0.2)
+        self.assertEqual(config.pick_height(0), 0.05)
+        self.assertEqual(config.pick_height(1), 0.03)
+        self.assertEqual(config.pick_height(2), 0.02)
         self.assertLessEqual(config.workspace_y[0], ZONE_COORDINATES["Zone_1"]["y"])
 
     @patch("src.franka.workflow.FrankaRobotArm")
@@ -133,6 +139,13 @@ class FrankaWorkflowTest(unittest.TestCase):
                 ).execute(methods)
 
         self.assertEqual(transformer.calls, 1)
+        for actual, expected in zip(
+            arm.movements[1][1][:3],
+            (0.484, 0.2, 0.5),
+        ):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(arm.movements[2][1][:3], (0.4, 0.2, 0.05))
+        self.assertEqual(arm.movements[4][1][2], 0.2)
         self.assertEqual(
             [event[0] for event in arm.movements],
             [

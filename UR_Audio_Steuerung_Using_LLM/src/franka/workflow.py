@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from src import robot_control as perception_steps
+from src.robot_output import emit_method_execution
 
 from .config import FrankaConfig, load_franka_config
 from .geometry import rotation_vector_to_quaternion
@@ -60,8 +61,8 @@ class FrankaAudioWorkflow:
         if not self._arm.health():
             raise RuntimeError("Franka robot health check failed")
         try:
-            for index, method_name in enumerate(method_list, start=1):
-                self._output(f"FRANKA STEP {index}/{len(method_list)}: {method_name}")
+            for method_name in method_list:
+                emit_method_execution(method_name, self._output)
                 self._execute_method(method_name)
         finally:
             self._arm.close()
@@ -160,10 +161,22 @@ class FrankaAudioWorkflow:
 
     def _move_above_selected_object(self) -> None:
         point = self._require_selected_point()
+        offset_x, offset_y, offset_z = self._config.camera_offset
+        camera_x = point.x + offset_x
+        camera_y = point.y + offset_y
+        camera_z = self._config.approach_height + offset_z
+        self._output(
+            "FRANKA CAMERA OFFSET: "
+            f"x={offset_x:.4f}, y={offset_y:.4f}, z={offset_z:.4f}"
+        )
+        self._output(
+            "FRANKA CAMERA APPROACH: "
+            f"x={camera_x:.4f}, y={camera_y:.4f}, z={camera_z:.4f}"
+        )
         self._move_cartesian(
-            point.x,
-            point.y,
-            self._config.approach_height,
+            camera_x,
+            camera_y,
+            camera_z,
             self._config.default_orientation,
         )
 
@@ -208,6 +221,11 @@ class FrankaAudioWorkflow:
         point = self._require_selected_point()
         object_class = self._require_selected_class()
         orientation = self._context.selected_orientation or self._config.default_orientation
+        self._output(
+            "FRANKA PICK COORDINATES: "
+            f"x={point.x:.4f}, y={point.y:.4f}, "
+            f"z={self._config.pick_height(object_class):.4f}"
+        )
         self._move_cartesian(
             point.x,
             point.y,
