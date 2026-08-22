@@ -10,16 +10,15 @@ from typing import Callable, Sequence
 
 from src import robot_control as perception_steps
 
-from .calibration import FrankaPixelTransformer
 from .config import FrankaConfig, load_franka_config
-from .geometry import calibration_pose_15, rotation_vector_to_quaternion
+from .geometry import rotation_vector_to_quaternion
 from .models import CartesianPose, PixelPoint, RobotPoint
+from .original_transformer import OriginalFrankaPixelTransformer
 from .robot import FrankaRobotArm, RobotArm, SimulatedFrankaRobotArm
 from .runtime_data import (
     read_class_file,
     read_detection_image_size,
     read_numeric_values,
-    read_pixel_file,
 )
 
 
@@ -42,7 +41,7 @@ class FrankaAudioWorkflow:
         self,
         arm: RobotArm,
         config: FrankaConfig,
-        transformer: FrankaPixelTransformer,
+        transformer: OriginalFrankaPixelTransformer,
         simulation: bool,
         output: Callable[[str], None],
     ) -> None:
@@ -176,24 +175,16 @@ class FrankaAudioWorkflow:
 
     def _prepare_precision_object(self) -> None:
         if self._simulation:
-            pixel = self._read_selection_pixel()
+            self._output("FRANKA SIMULATION: Precision object data accepted")
         else:
             success = perception_steps.filter_and_prepare_selected_object_after_precision_detection(
                 self._config.robot_ip
             )
             if success is False:
                 raise RuntimeError("Precision object filtering failed")
-            pixel = read_pixel_file(TXT_DIR / "final_object_center_point.txt")
             self._context.selected_class = read_class_file(
                 TXT_DIR / "final_object_label.txt"
             )
-        self._context.selected_point = self._transform_pixel(pixel)
-        self._output(
-            "FRANKA PRECISION COORDINATES: "
-            f"x={self._context.selected_point.x:.4f}, "
-            f"y={self._context.selected_point.y:.4f}, "
-            f"table_z={self._context.selected_point.z:.4f}"
-        )
 
     def _precision_pca(self) -> None:
         if self._simulation:
@@ -268,7 +259,6 @@ class FrankaAudioWorkflow:
         point = self._transformer.transform(
             pixel,
             image_size,
-            self._arm.base_to_end_effector(),
         )
         self._validate_workspace((point.x, point.y, point.z))
         return point
@@ -317,15 +307,6 @@ class FrankaAudioWorkflow:
             raise ValueError(f"Unknown selected object class {class_name}")
         return class_ids[class_name]
 
-    @staticmethod
-    def _read_selection_pixel() -> PixelPoint:
-        data = json.loads((TXT_DIR / "selection_data.json").read_text(encoding="utf-8"))
-        return PixelPoint(
-            float(data["original_center_x"]),
-            float(data["original_center_y"]),
-        )
-
-
 def execute_franka_workflow(
     method_list: Sequence[str],
     robot_ip: str | None = None,
@@ -337,14 +318,13 @@ def execute_franka_workflow(
         config = FrankaConfig(**{**config.__dict__, "robot_ip": robot_ip.strip()})
     output = output_callback or print
     perception_steps.set_simulation_mode(simulation, output_callback)
-    transformer = FrankaPixelTransformer(
-        config.calibration_dir,
+    transformer = OriginalFrankaPixelTransformer(
         (config.calibration_width, config.calibration_height),
         config.mirror_x,
     )
     arm: RobotArm
     if simulation:
-        arm = SimulatedFrankaRobotArm(calibration_pose_15(config))
+        arm = SimulatedFrankaRobotArm(transformer.calibration_pose())
     else:
         arm = FrankaRobotArm(
             config.robot_ip,

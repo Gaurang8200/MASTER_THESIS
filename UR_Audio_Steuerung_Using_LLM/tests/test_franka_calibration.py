@@ -2,57 +2,83 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from src.franka.calibration import FrankaPixelTransformer
-from src.franka.config import load_franka_config
-from src.franka.geometry import calibration_pose_15
 from src.franka.models import PixelPoint
-from src.franka.robot import SimulatedFrankaRobotArm
+from src.franka.original_transformer import (
+    CALIBRATION_DIR,
+    OriginalFrankaPixelTransformer,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = PROJECT_ROOT.parent
+SOURCE_CALIBRATION_DIR = REPOSITORY_ROOT / "Handgesture_FrankaEmika"
 
 
 class FrankaCalibrationTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.config = load_franka_config()
-        cls.transformer = FrankaPixelTransformer(
-            cls.config.calibration_dir,
-            (cls.config.calibration_width, cls.config.calibration_height),
-            cls.config.mirror_x,
-        )
+    def setUp(self) -> None:
+        self.transformer = OriginalFrankaPixelTransformer((1280, 720), False)
 
-    def test_pixel_maps_to_calibrated_table_in_franka_base(self) -> None:
-        arm = SimulatedFrankaRobotArm(calibration_pose_15(self.config))
-        arm.start()
+    def test_original_pixel2robot_calculation_is_called_with_pose_15(self) -> None:
+        with patch(
+            "src.franka.original_transformer.pixel2robot",
+            return_value=(0.385, 0.338, 0.3),
+        ) as original_calculation:
+            point = self.transformer.transform(
+                PixelPoint(1280.0, 736.0),
+                (2560, 1472),
+            )
 
+        original_calculation.assert_called_once_with(640.0, 360.0, 15)
+        self.assertEqual((point.x, point.y, point.z), (0.385, 0.338, 0.3))
+
+    def test_original_calculation_returns_known_calibrated_coordinates(self) -> None:
         point = self.transformer.transform(
             PixelPoint(640.0, 360.0),
             (1280, 720),
-            arm.base_to_end_effector(),
         )
 
-        self.assertGreater(point.x, 0.1)
-        self.assertLess(point.x, 0.75)
-        self.assertGreater(point.y, -0.1)
-        self.assertLess(point.y, 0.65)
-        self.assertAlmostEqual(point.z, -0.011, delta=0.01)
+        self.assertAlmostEqual(point.x, 0.3851089091, places=9)
+        self.assertAlmostEqual(point.y, 0.3380565786, places=9)
+        self.assertEqual(point.z, 0.3)
 
-    def test_detection_pixel_is_scaled_to_calibration_resolution(self) -> None:
-        arm = SimulatedFrankaRobotArm(calibration_pose_15(self.config))
-        arm.start()
-        full = self.transformer.transform(
-            PixelPoint(1280.0, 736.0),
-            (2560, 1472),
-            arm.base_to_end_effector(),
+    def test_pose_15_comes_from_copied_robot_poses(self) -> None:
+        pose = self.transformer.calibration_pose()
+
+        self.assertEqual(pose.translation, (0.3627558, 0.3237964, 0.4580297))
+
+    def test_copied_calibration_json_files_equal_the_sources(self) -> None:
+        names = (
+            "input_params.json",
+            "output_b2p.json",
+            "output_c2f.json",
+            "output_wp2camera.json",
+            "robot_poses.json",
         )
-        calibrated = self.transformer.transform(
-            PixelPoint(640.0, 360.0),
-            (1280, 720),
-            arm.base_to_end_effector(),
+        for name in names:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    (CALIBRATION_DIR / name).read_bytes(),
+                    (SOURCE_CALIBRATION_DIR / name).read_bytes(),
+                )
+
+    def test_copied_function_pool_keeps_original_calculation(self) -> None:
+        copied = (CALIBRATION_DIR / "function_pool.py").read_text(encoding="utf-8")
+        source = (SOURCE_CALIBRATION_DIR / "function_pool.py").read_text(encoding="utf-8")
+
+        self.assertEqual(copied.removeprefix("# MO_Changes\n"), source)
+
+    def test_copied_pixel2robot_keeps_original_calculation(self) -> None:
+        copied = (CALIBRATION_DIR / "pixel2robot.py").read_text(encoding="utf-8")
+        source = (SOURCE_CALIBRATION_DIR / "pixel2robot.py").read_text(encoding="utf-8")
+        normalized = copied.removeprefix("# MO_Changes\n").replace(
+            "from . import function_pool as fp",
+            "import function_pool as fp",
         )
 
-        self.assertAlmostEqual(full.x, calibrated.x, places=9)
-        self.assertAlmostEqual(full.y, calibrated.y, places=9)
-        self.assertAlmostEqual(full.z, calibrated.z, places=9)
+        self.assertEqual(normalized, source)
 
 
 if __name__ == "__main__":

@@ -10,9 +10,7 @@ from .models import CartesianPose
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-REPOSITORY_ROOT = PROJECT_ROOT.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "src" / "config" / "franka_robot.json"
-DEFAULT_CALIBRATION_DIR = REPOSITORY_ROOT / "Handgesture_FrankaEmika"
 
 
 @dataclass(frozen=True)
@@ -34,7 +32,6 @@ class FrankaConfig:
     workspace_y: tuple[float, float]
     workspace_z: tuple[float, float]
     zones: dict[str, CartesianPose]
-    calibration_dir: Path
 
     def pick_height(self, object_class: int) -> float:
         if object_class not in self.pick_heights:
@@ -61,12 +58,6 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
         name: CartesianPose.create(value["translation"], value["quaternion"])
         for name, value in data.get("zones", {}).items()
     }
-    calibration_dir_value = data.get("calibration_dir")
-    calibration_dir = (
-        Path(calibration_dir_value).expanduser().resolve()
-        if calibration_dir_value
-        else DEFAULT_CALIBRATION_DIR
-    )
     config = FrankaConfig(
         robot_ip=str(data["robot_ip"]),
         dynamics_factor=float(data["dynamics_factor"]),
@@ -89,7 +80,6 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
         workspace_y=_float_tuple(data["workspace"]["y"], 2, "workspace.y"),
         workspace_z=_float_tuple(data["workspace"]["z"], 2, "workspace.z"),
         zones=zones,
-        calibration_dir=calibration_dir,
     )
     _validate_config(config)
     return config

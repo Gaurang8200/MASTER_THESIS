@@ -18,11 +18,9 @@ class _FakeTransformer:
     def __init__(self) -> None:
         self.calls = 0
 
-    def transform(self, pixel, source_size, base_to_end_effector):
+    def transform(self, pixel, source_size):
         self.calls += 1
-        if self.calls == 1:
-            return RobotPoint(0.40, 0.20, 0.0)
-        return RobotPoint(0.405, 0.195, 0.0)
+        return RobotPoint(0.40, 0.20, 0.3)
 
 
 class FrankaWorkflowTest(unittest.TestCase):
@@ -102,7 +100,7 @@ class FrankaWorkflowTest(unittest.TestCase):
                     lambda message: None,
                 ).execute(methods)
 
-        self.assertEqual(transformer.calls, 2)
+        self.assertEqual(transformer.calls, 1)
         self.assertEqual(
             [event[0] for event in arm.movements],
             [
