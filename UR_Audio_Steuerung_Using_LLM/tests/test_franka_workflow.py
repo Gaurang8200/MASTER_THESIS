@@ -11,7 +11,7 @@ from unittest.mock import patch
 from src.franka.config import load_franka_config
 from src.franka.models import CartesianPose, RobotPoint
 from src.franka.robot import SimulatedFrankaRobotArm
-from src.franka.workflow import FrankaAudioWorkflow
+from src.franka.workflow import FrankaAudioWorkflow, prepare_franka_for_detection
 
 
 class _FakeTransformer:
@@ -24,6 +24,23 @@ class _FakeTransformer:
 
 
 class FrankaWorkflowTest(unittest.TestCase):
+    @patch("src.franka.workflow.FrankaRobotArm")
+    def test_detection_preparation_uses_original_main_joints(
+        self,
+        arm_type,
+    ) -> None:
+        arm = arm_type.return_value
+        arm.health.return_value = True
+        expected_joints = load_franka_config().home_joints
+
+        prepare_franka_for_detection("172.16.0.2")
+
+        arm.start.assert_called_once_with()
+        self.assertEqual(arm_type.call_args.args[0], "172.16.0.2")
+        arm.move_joints.assert_called_once_with(expected_joints)
+        arm.move_pose.assert_not_called()
+        arm.close.assert_called_once_with()
+
     def test_complete_precision_workflow_uses_franka_arm(self) -> None:
         config = load_franka_config()
         zone = CartesianPose.create((0.50, 0.10, 0.10), config.default_orientation)
