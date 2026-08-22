@@ -22,6 +22,7 @@ class FrankaConfig:
     home_joints: tuple[float, ...]
     intermediate_joints: tuple[float, ...]
     approach_height: float
+    camera_offset: tuple[float, float, float]
     lift_height: float
     pick_heights: dict[int, float]
     place_heights: dict[int, float]
@@ -74,6 +75,7 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
             data["intermediate_joints"], 7, "intermediate_joints"
         ),
         approach_height=float(data["approach_height"]),
+        camera_offset=_float_tuple(data["camera_offset"], 3, "camera_offset"),
         lift_height=float(data["lift_height"]),
         pick_heights={int(key): float(value) for key, value in data["pick_heights"].items()},
         place_heights={

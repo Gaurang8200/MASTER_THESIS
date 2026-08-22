@@ -1,4 +1,4 @@
-# src/robot_control.py
+# MO_Changes
 
 import sys
 import time
@@ -8,6 +8,8 @@ import socket
 import struct
 import json
 import shutil
+
+from src.robot_output import emit_method_execution
 
 # Projekt‐Root und Vorgänger‐Ordner
 PROJECT_ROOT    = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -712,17 +714,24 @@ def convert_pixel_to_robot_multi(pixel_x, pixel_y):
             sim_print(f"CONVERSION: Verwende pixel2robot_multi.py für ({pixel_x}, {pixel_y})")
             # Mock-Konvertierung für Simulation
             robot_coords_file = os.path.join(PREDECESSOR_DIR, 'txt_file', 'robot_coordinates.txt')
-            
+
             # Create realistic mock robot coordinates
             mock_x = 0.300 + (pixel_x - 1280) * 0.0003  # Scale factor für X
             mock_y = -0.050 + (pixel_y - 720) * 0.0002   # Scale factor für Y
-            
+
             # Write mock coordinates to robot_coordinates.txt
             with open(robot_coords_file, 'w') as f:
                 f.write(f"{mock_x:.6f}\n")
                 f.write(f"{mock_y:.6f}\n")
-            
+
             sim_print(f"MOCK CONVERSION: Created robot coordinates: x={mock_x:.3f}, y={mock_y:.3f}")
+            sim_print(
+                "SIMULATION COORDINATE RESULT:\n"
+                f"[[{mock_x:.5f}]\n"
+                f" [{mock_y:.5f}]\n"
+                " [0.50000]\n"
+                " [1.00000]]"
+            )
             return True
         else:
             print(f"[DEBUG] convert_pixel_to_robot_multi → converting ({pixel_x}, {pixel_y})")
@@ -894,37 +903,44 @@ def convert_pixel_to_robot():
                         coords = center_data.split()
                         pixel_x, pixel_y = coords[0], coords[1]
                     pixel_x, pixel_y = float(pixel_x), float(pixel_y)
-                    
+
                     # Create realistic mock robot coordinates based on pixel position
                     # Typical conversion: pixel [1199, 865] → robot [0.450, -0.120]
                     mock_x = 0.300 + (pixel_x - 640) * 0.0003  # Scale factor for X
                     mock_y = -0.050 + (pixel_y - 480) * 0.0002  # Scale factor for Y
-                    
+
                     # Write mock coordinates to robot_coordinates.txt
                     with open(robot_coords_file, 'w') as f:
                         f.write(f"{mock_x:.6f}\n")
                         f.write(f"{mock_y:.6f}\n")
-                    
+
                     sim_print(f"MOCK SIMULATION: Created robot coordinates: x={mock_x:.3f}, y={mock_y:.3f}")
+                    sim_print(
+                        "SIMULATION COORDINATE RESULT:\n"
+                        f"[[{mock_x:.5f}]\n"
+                        f" [{mock_y:.5f}]\n"
+                        " [0.50000]\n"
+                        " [1.00000]]"
+                    )
                 else:
                     sim_print("WARNING SIMULATION: center_point.txt is empty, running LEGACY script")
                     # Run the actual legacy script even in simulation
                     subprocess.run([PRE_PYTHON, script], cwd=base,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                 stderr=subprocess.DEVNULL)
             else:
                 sim_print("WARNING SIMULATION: center_point.txt not found, running LEGACY script")
                 # Run the actual legacy script even in simulation
                 subprocess.run([PRE_PYTHON, script], cwd=base,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             stderr=subprocess.DEVNULL)
         except Exception as e:
             sim_print(f"ERROR SIMULATION: Failed to process coordinates: {e}")
             # Fallback: run the actual legacy script
             subprocess.run([PRE_PYTHON, script], cwd=base,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                         stderr=subprocess.DEVNULL)
     else:
         print(f"[DEBUG] convert_pixel_to_robot → running LEGACY {script}")
         subprocess.run([PRE_PYTHON, script], cwd=base,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                       stderr=subprocess.DEVNULL)
     
     if simulation_mode:
         sim_print("SUCCESS SIMULATION: LEGACY pixel to robot coordinate conversion completed")
@@ -1259,8 +1275,7 @@ def execute_robot_method(method_name, robot_ip):
     from src.zone_coordinates import get_zone_coordinates, get_object_place_height
     global x_place, y_place, z_place
 
-    # DEBUG: METHOD EXECUTION ANALYSIS
-    print(f"DEBUG METHOD: Executing {method_name}")
+    emit_method_execution(method_name, simulation_output_callback)
     if method_name == "suction_on":
         print("DEBUG METHOD: *** SUCTION_ON DETECTED - this is the suction step! ***")
 
