@@ -25,7 +25,8 @@ import threading
 # Multi-Object System Imports
 from src.speech.speech_to_text_local import SpeechToTextLocal
 from src.speech.information_extraction_openai_api_multi import InformationExtractionOpenAIMulti
-from src.detection_preparation import prepare_robot_for_detection
+from src.speech.microphone_devices import discover_input_microphones
+from src.detection_preparation import get_default_robot_ip, prepare_robot_for_detection
 from src.robot_method_selector_multi import select_robot_methods_multi, select_target_object
 from src.zone_coordinates import get_zone_coordinates
 
@@ -111,6 +112,9 @@ def update_button_states():
    btn_record.config(state="normal" if detected_objects else "disabled")
    # Execute button - enabled only if robot methods exist
    btn_execute.config(state="normal" if robot_methods else "disabled")
+
+def update_robot_ip():
+   robot_ip.set(get_default_robot_ip(robot_type.get()))
 
 def save_command_history():
    if ie_instance:
@@ -319,19 +323,42 @@ def toggle_recording():
        if not detected_objects:
            messagebox.showwarning("No Objects", "Please detect objects first using 'Capture & Detect Objects'")
            return
+       idx = mic_mapping.get(mic_var.get())
+       if idx is None:
+           messagebox.showerror(
+               "Microphone unavailable",
+               "No valid input microphone was found.",
+           )
+           return
+
+       recognizer = sr.Recognizer()
+       last_audio = None
+       try:
+           mic = sr.Microphone(device_index=idx)
+           with mic as source:
+               recognizer.adjust_for_ambient_noise(source, duration=1)
+           stop_listening = recognizer.listen_in_background(
+               mic, callback, phrase_time_limit=5
+           )
+       except Exception as error:
+           stop_listening = None
+           output_text.delete("1.0", tk.END)
+           output_text.insert(
+               tk.END,
+               f"MICROPHONE: Could not start the selected input. {error}\n",
+           )
+           update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
+           messagebox.showerror(
+               "Microphone error",
+               "The selected microphone could not be opened. Check the microphone selection and macOS permission.",
+           )
+           return
+
        recording = True
        btn_record.config(text="Stop Recording")
        update_workflow_status(WorkflowStatus.PROCESSING)
        output_text.delete("1.0", tk.END)
        output_text.insert(tk.END, "MICROPHONE: Recording...\n")
-       idx = mic_mapping.get(mic_var.get(), 0)
-       recognizer = sr.Recognizer()
-       mic = sr.Microphone(device_index=idx)
-       with mic as source:
-           recognizer.adjust_for_ambient_noise(source, duration=1)
-       stop_listening = recognizer.listen_in_background(
-           mic, callback, phrase_time_limit=5
-       )
    else:
        if stop_listening:
            stop_listening(wait_for_stop=False)
@@ -930,11 +957,23 @@ workflow_help.pack()
 
 ttk.Label(left_frame, text="Robot Type:").pack(anchor="w", pady=(10,0), padx=10)
 robot_type = tk.StringVar(app, value="franka")
-ttk.Radiobutton(left_frame, text="Franka Emika", variable=robot_type, value="franka").pack(anchor="w", padx=20)
-ttk.Radiobutton(left_frame, text="Universal Robot", variable=robot_type, value="universal").pack(anchor="w", padx=20)
+ttk.Radiobutton(
+   left_frame,
+   text="Franka Emika",
+   variable=robot_type,
+   value="franka",
+   command=update_robot_ip,
+).pack(anchor="w", padx=20)
+ttk.Radiobutton(
+   left_frame,
+   text="Universal Robot",
+   variable=robot_type,
+   value="universal",
+   command=update_robot_ip,
+).pack(anchor="w", padx=20)
 
 ttk.Label(left_frame, text="Enter Robot IP:").pack(pady=(10,0))
-robot_ip = tk.StringVar(app, value="172.16.0.2")
+robot_ip = tk.StringVar(app, value=get_default_robot_ip(robot_type.get()))
 ttk.Entry(left_frame, textvariable=robot_ip, width=20).pack(pady=(0,10))
 
 ttk.Label(left_frame, text="Befehlstyp:").pack(anchor="w", pady=(10,0), padx=10)
@@ -955,10 +994,31 @@ ttk.Radiobutton(left_frame, text="macOS", variable=platform_select, value="mac")
 ttk.Radiobutton(left_frame, text="Linux", variable=platform_select, value="linux").pack(anchor="w", padx=20)
 
 ttk.Label(left_frame, text="Select Microphone:").pack(pady=(10,0))
-mic_names   = sr.Microphone.list_microphone_names()
-mic_mapping = {name: idx for idx, name in enumerate(mic_names)}
-mic_var     = tk.StringVar(app, value=mic_names[0] if mic_names else "")
-ttk.OptionMenu(left_frame, mic_var, *mic_names).pack(pady=(0,10))
+try:
+   microphone_options, default_microphone_index = discover_input_microphones()
+except Exception as error:
+   print(f"MICROPHONE: Device discovery failed. {error}")
+   microphone_options = []
+   default_microphone_index = None
+
+mic_mapping = {
+   option.display_name: option.device_index for option in microphone_options
+}
+default_microphone_name = next(
+   (
+       option.display_name
+       for option in microphone_options
+       if option.device_index == default_microphone_index
+   ),
+   "No input microphone found",
+)
+mic_var = tk.StringVar(app, value=default_microphone_name)
+ttk.OptionMenu(
+   left_frame,
+   mic_var,
+   default_microphone_name,
+   *mic_mapping.keys(),
+).pack(pady=(0,10))
 
 # === ENHANCED BUTTONS WITH STATE MANAGEMENT ===
 button_frame = ttk.LabelFrame(left_frame, text="Controls", padding="5")

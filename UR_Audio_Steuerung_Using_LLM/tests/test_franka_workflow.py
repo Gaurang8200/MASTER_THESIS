@@ -12,6 +12,7 @@ from src.franka.config import load_franka_config
 from src.franka.models import CartesianPose, RobotPoint
 from src.franka.robot import SimulatedFrankaRobotArm
 from src.franka.workflow import FrankaAudioWorkflow, prepare_franka_for_detection
+from src.zone_coordinates import OBJECT_PLACE_HEIGHTS, ZONE_COORDINATES
 
 
 class _FakeTransformer:
@@ -24,6 +25,22 @@ class _FakeTransformer:
 
 
 class FrankaWorkflowTest(unittest.TestCase):
+    def test_franka_uses_ur_zones_and_object_place_heights(self) -> None:
+        config = load_franka_config()
+
+        for name in ("Zone_1", "Zone_2", "Zone_3"):
+            with self.subTest(name=name):
+                ur_zone = ZONE_COORDINATES[name]
+                franka_zone = config.zone(name)
+                self.assertEqual(
+                    franka_zone.translation[:2],
+                    (ur_zone["x"], ur_zone["y"]),
+                )
+        for object_class, height in OBJECT_PLACE_HEIGHTS.items():
+            with self.subTest(object_class=object_class):
+                self.assertEqual(config.place_height(object_class), height)
+        self.assertLessEqual(config.workspace_y[0], ZONE_COORDINATES["Zone_1"]["y"])
+
     @patch("src.franka.workflow.FrankaRobotArm")
     def test_detection_preparation_uses_original_main_joints(
         self,
@@ -43,8 +60,6 @@ class FrankaWorkflowTest(unittest.TestCase):
 
     def test_complete_precision_workflow_uses_franka_arm(self) -> None:
         config = load_franka_config()
-        zone = CartesianPose.create((0.50, 0.10, 0.10), config.default_orientation)
-        config = replace(config, zones={"Zone_2": zone})
         initial = CartesianPose.create((0.36, 0.32, 0.45), config.default_orientation)
         arm = SimulatedFrankaRobotArm(initial)
         transformer = _FakeTransformer()
@@ -133,6 +148,7 @@ class FrankaWorkflowTest(unittest.TestCase):
                 "joints",
             ],
         )
+        self.assertEqual(arm.movements[6][1][:3], (0.366, -0.008, 0.067))
 
     def test_missing_real_zone_is_rejected_before_robot_starts(self) -> None:
         config = replace(load_franka_config(), zones={})

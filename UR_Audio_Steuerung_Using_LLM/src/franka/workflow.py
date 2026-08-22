@@ -237,7 +237,16 @@ class FrankaAudioWorkflow:
             )
             self._output(f"FRANKA SIMULATION ZONE: {zone_name}")
             return
-        self._context.target_zone = self._config.zone(zone_name)
+        zone = self._config.zone(zone_name)
+        object_class = self._require_selected_class()
+        self._context.target_zone = CartesianPose.create(
+            (
+                zone.translation[0],
+                zone.translation[1],
+                self._config.place_height(object_class),
+            ),
+            zone.quaternion,
+        )
 
     def _move_to_zone(self) -> None:
         if self._context.target_zone is None:
