@@ -1,3 +1,4 @@
+# MO_Changes
 import os
 from pathlib import Path
 import logging
@@ -30,7 +31,6 @@ list_of_files = [
     "templates/index.html",
     "app.py",
     "Dockerfile",
-    "requirements.txt",
     "setup.py",
 ]
 

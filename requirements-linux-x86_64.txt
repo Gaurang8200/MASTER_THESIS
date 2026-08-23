@@ -1,0 +1,39 @@
+# MO_Changes
+# Ubuntu x86 64 with Python 3.12
+# System packages required: espeak-ng ffmpeg portaudio19-dev python3-tk
+
+dill==0.3.8
+franky-control==1.1.4
+franky-sim==1.0.4
+from-root==1.3.0
+gdown==5.2.0
+GitPython==3.1.59
+matplotlib==3.10.9
+mediapipe==0.10.33
+numpy==2.4.4
+openai==3.1.0
+openai-whisper==20250625
+opencv-contrib-python==4.13.0.92
+opencv-python==4.13.0.92
+pandas==3.0.5
+Pillow==12.2.0
+psutil==7.2.2
+PyAudio==0.2.14
+pydantic==2.13.3
+pytest==9.0.3
+python-dotenv==1.2.2
+pyttsx3==2.99
+PyYAML==6.0.3
+requests==2.33.1
+scikit-learn==1.8.0
+scipy==1.17.1
+seaborn==0.13.2
+setuptools<81
+sounddevice==0.5.5
+SpeechRecognition==3.17.0
+sympy==1.14.0
+thop==0.1.1.post2209072238
+torch==2.13.0
+torchvision==0.28.0
+tqdm==4.67.3
+ultralytics==8.4.117
