@@ -20,7 +20,6 @@ Pillow==12.2.0
 psutil==7.2.2
 PyAudio==0.2.14
 pydantic==2.13.3
-pytest==9.0.3
 python-dotenv==1.2.2
 pyttsx3==2.99
 PyYAML==6.0.3
