@@ -29,6 +29,11 @@ from src.speech.microphone_devices import discover_input_microphones
 from src.detection_preparation import get_default_robot_ip, prepare_robot_for_detection
 from src.robot_method_selector_multi import select_robot_methods_multi, select_target_object
 from src.zone_coordinates import get_zone_coordinates
+from src.multimodal import (
+   GestureProcessClient,
+   OperatorFeedback,
+   resolve_multimodal_selection,
+)
 
 # Python executable for YOLOv5 scripts
 def get_yolo_python():
@@ -87,6 +92,8 @@ robot_methods     = []
 ie_instance       = None          # für OpenAI IE
 detected_objects  = []            # List of detected objects
 selected_object   = None          # Currently selected object
+gesture_client    = GestureProcessClient(ROOT, display=True)
+gesture_start_error = None
 
 # === WORKFLOW STATUS MANAGEMENT ===
 class WorkflowStatus:
@@ -191,6 +198,20 @@ def handle_clarification_needed(info):
        clarification_text.insert(tk.END, msg)
        return True
    return False
+
+def load_overview_detection_data():
+   detection_path = os.path.join(PRE, "txt_file", "detected_objects.json")
+   with open(detection_path, "r", encoding="utf8") as detection_file:
+       return json.load(detection_file)
+
+def publish_multimodal_rejection(reason):
+   feedback = OperatorFeedback(
+       lambda message: (
+           output_text.insert(tk.END, message),
+           output_text.see(tk.END),
+       )
+   )
+   feedback.rejection(reason)
 
 def capture_and_detect_objects():
    """Enhanced capture with simulation mode support"""
@@ -317,12 +338,16 @@ def callback(recognizer, audio):
    print("Audio captured.")
 
 def toggle_recording():
-   global recording, stop_listening, last_audio, robot_methods, ie_instance, selected_object
+   global recording, stop_listening, last_audio, robot_methods, ie_instance
+   global selected_object, gesture_start_error
 
    if not recording:
        if not detected_objects:
            messagebox.showwarning("No Objects", "Please detect objects first using 'Capture & Detect Objects'")
            return
+       robot_methods.clear()
+       selected_object = None
+       update_object_display()
        idx = mic_mapping.get(mic_var.get())
        if idx is None:
            messagebox.showerror(
@@ -333,6 +358,13 @@ def toggle_recording():
 
        recognizer = sr.Recognizer()
        last_audio = None
+       gesture_start_error = None
+       try:
+           session = gesture_client.start()
+           print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
+       except Exception as error:
+           gesture_start_error = str(error)
+           print(f"MULTIMODAL: Gesture process could not start. {error}")
        try:
            mic = sr.Microphone(device_index=idx)
            with mic as source:
@@ -341,6 +373,7 @@ def toggle_recording():
                mic, callback, phrase_time_limit=5
            )
        except Exception as error:
+           gesture_client.cancel()
            stop_listening = None
            output_text.delete("1.0", tk.END)
            output_text.insert(
@@ -365,6 +398,7 @@ def toggle_recording():
        recording = False
        btn_record.config(text="Start Recording")
        if not last_audio:
+           gesture_client.cancel()
            output_text.insert(tk.END, "No audio captured.\n")
            update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
            return
@@ -373,6 +407,19 @@ def toggle_recording():
        with open(temp_file, "wb") as f:
            f.write(last_audio.get_wav_data())
        output_text.insert(tk.END, f"Audio saved to {temp_file}\n")
+       if gesture_start_error is None:
+           gesture_result = gesture_client.finish()
+       else:
+           gesture_result = {
+               "status": "error",
+               "reason": "gesture_process_not_started",
+               "safe_to_use": False,
+               "error": gesture_start_error,
+           }
+       print(
+           "MULTIMODAL: Gesture result "
+           + json.dumps(gesture_result, ensure_ascii=False)
+       )
        try:
            stt  = SpeechToTextLocal()
            text = stt.transcribe(temp_file)
@@ -385,6 +432,33 @@ def toggle_recording():
            if ie_instance is None:
                ie_instance = InformationExtractionOpenAIMulti()
            info = ie_instance.extract(text, command_type.get())
+           detection_data = load_overview_detection_data()
+           multimodal = resolve_multimodal_selection(
+               text,
+               info,
+               gesture_result,
+               detection_data,
+           )
+           if multimodal.required and not multimodal.accepted:
+               robot_methods.clear()
+               selected_object = None
+               publish_multimodal_rejection(multimodal.reason)
+               update_object_display()
+               update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
+               return
+           if multimodal.required and multimodal.selected_object is not None:
+               selected_object = multimodal.selected_object
+               info["object"] = selected_object["class_name"]
+               info["object_index"] = multimodal.object_index
+               info["selection_mode"] = "gesture"
+               info["gesture_session_id"] = gesture_result.get("session_id")
+               clarification_fields = [
+                   field
+                   for field in (info.get("clarification_fields") or [])
+                   if field != "object"
+               ]
+               info["clarification_fields"] = clarification_fields
+               info["needs_clarification"] = bool(clarification_fields)
            if handle_clarification_needed(info):
                update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
                return
@@ -423,7 +497,8 @@ def toggle_recording():
                object_index = info.get('object_index', 0)
                objs = [o for o in detected_objects if o['class_name'].lower() == object_type.lower()]
                if objs and object_index < len(objs):
-                   selected_object = objs[object_index]
+                   if info.get("selection_mode") != "gesture":
+                       selected_object = objs[object_index]
                    update_object_display()
                    
                    # **NEW: Write selection_data.json immediately after audio processing**
@@ -439,7 +514,10 @@ def toggle_recording():
                        "original_center_y": selected_object['center'][1],
                        "original_bbox": selected_object['bbox'],
                        "original_confidence": selected_object['confidence'],
-                       "selection_phase": "overview"  # Unterscheidung zwischen Overview und Precision
+                       "selection_phase": "overview",
+                       "selection_source": info.get("selection_mode", "speech"),
+                       "gesture_session_id": info.get("gesture_session_id"),
+                       "fingertip_pixel": gesture_result.get("fingertip_pixel"),
                    }
                    
                    selection_data_path = os.path.join(txt_dir, "selection_data.json")
@@ -447,7 +525,10 @@ def toggle_recording():
                        json.dump(selection_data, f, indent=2)
                    output_text.insert(tk.END, f" SELECTION: Object selection saved to selection_data.json\n")
                    print(f"DEBUG: Wrote selection_data.json for object ID {selected_object['id']}")
-           update_workflow_status(WorkflowStatus.READY_FOR_EXECUTION)
+           if robot_methods and selected_object is not None:
+               update_workflow_status(WorkflowStatus.READY_FOR_EXECUTION)
+           else:
+               update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
        except Exception as e:
            output_text.insert(tk.END, f"Robot method selection error: {e}\n")
            update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
@@ -933,6 +1014,12 @@ def run_script_subprocess(script_name):
 # --- GUI-Aufbau ---
 app = tk.Tk()
 app.title("Multi-Object Robot Command via Speech")
+
+def close_application():
+   gesture_client.cancel()
+   app.destroy()
+
+app.protocol("WM_DELETE_WINDOW", close_application)
 
 main_frame = ttk.Frame(app, padding="10")
 main_frame.pack(fill=tk.BOTH, expand=True)

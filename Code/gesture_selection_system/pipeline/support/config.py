@@ -1,3 +1,4 @@
+# MO_Changes
 """Typed configuration for the gesture selection system.
 
 The YAML file is the single source of truth for thresholds, stability windows,
@@ -13,7 +14,7 @@ import numpy as np
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from gesture_classes import CLASS_IDS, GestureName
+from gesture_classes import GestureName
 
 PIPELINE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PIPELINE_ROOT / "configs" / "gesture_config.yaml"
@@ -251,12 +252,21 @@ class GestureConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_class_ids(self) -> "GestureConfig":
-        # The runtime mapping has to match the order the model was trained on,
-        # otherwise a detected open palm would be read as a fingertip.
-        if self.class_ids != CLASS_IDS:
-            raise ValueError(
-                f"class_ids {self.class_ids} do not match the training classes {CLASS_IDS}"
-            )
+        known = {gesture.value for gesture in GestureName}
+        configured = set(self.class_ids)
+        unknown = configured.difference(known)
+        required = {
+            GestureName.POINTING_FINGER.value,
+            GestureName.INDEX_FINGERTIP.value,
+        }
+        missing = required.difference(configured)
+        indexes = list(self.class_ids.values())
+        if unknown:
+            raise ValueError(f"unknown gesture classes: {sorted(unknown)}")
+        if missing:
+            raise ValueError(f"required gesture classes are missing: {sorted(missing)}")
+        if len(indexes) != len(set(indexes)) or any(index < 0 for index in indexes):
+            raise ValueError("class_ids must use unique nonnegative indexes")
         return self
 
     def gesture_by_class_id(self) -> dict[int, GestureName]:

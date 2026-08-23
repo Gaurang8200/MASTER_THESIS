@@ -1,3 +1,4 @@
+# MO_Changes
 import os
 import re
 import json
@@ -171,7 +172,7 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
             system = (
                 "You are an assistant for a robotics application with multi-object detection capabilities. "
                 "Given a transcribed text command in German or English, you extract the key information "
-                "under the keys: intent, target_location, action, object, object_index, and output it as a valid JSON object. "
+                "under the keys: intent, target_location, action, object, object_index, selection_mode, and output it as a valid JSON object. "
                 "The system can now detect multiple objects simultaneously and the user can select specific objects. "
                 "If you are unsure about any information, set needs_clarification to true and specify which fields need clarification."
             )
@@ -187,7 +188,7 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
 
             user = (
                 f"""Extrahiere die folgenden Informationen aus dem Sprachbefehl (der Befehl kann auf Deutsch oder Englisch sein).
-                Gib genau ein gültiges JSON-Objekt mit den Schlüsseln: "intent", "target_location", "action", "object", "object_index", "needs_clarification", "clarification_fields", "command_type" und "reference_index" zurück.
+                Gib genau ein gültiges JSON-Objekt mit den Schlüsseln: "intent", "target_location", "action", "object", "object_index", "selection_mode", "needs_clarification", "clarification_fields", "command_type" und "reference_index" zurück.
                 
                 WICHTIG: Das System kann jetzt mehrere Objekte gleichzeitig erkennen!
                 {object_context}
@@ -197,6 +198,8 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
                 - "action": Die spezifischen Aktionen, um die Bewegung auszuführen. Um das Objekt in eine bestimmte Zone zu bringen, musst du greifen, bewegen und loslassen; die Ausgabe für action wäre: greife [Objekt], bewege zu Zone ... und lasse los. Um ein Objekt über einer Zone zu halten, musst du greifen, bewegen und halten; die Ausgabe wäre: greife [Objekt], bewege über Zone ... und halte.
                 - "object": Wähle nur aus den aktuell erkannten Objekten: {self.available_objects}. Das System unterstützt deutsche Objektnamen (z.B. "Zylinder" für "Cylinder", "Quader" für "Box"). Falls das gewünschte Objekt nicht verfügbar ist, setze needs_clarification auf true.
                 - "object_index": Falls mehrere Objekte des gleichen Typs vorhanden sind, gib den Index an (0 für das erste, 1 für das zweite, etc.). Falls nur ein Objekt des Typs vorhanden ist oder nicht spezifiziert, verwende 0.
+                - "selection_mode": Verwende "gesture" wenn der Benutzer this object, that object, pick it up, dieses Objekt, das Objekt oder einen ähnlich zeigenden Ausdruck verwendet. Verwende sonst "speech".
+                - Wenn selection_mode "gesture" ist, darf object null sein und object darf nicht als fehlendes Klärungsfeld markiert werden. Die Gestenerkennung liefert das Objekt.
                 - "needs_clarification": true/false, ob weitere Klärung benötigt wird
                 - "clarification_fields": Liste der Felder, die Klärung benötigen (z.B. ["target_location", "object"])
                 - "command_type": "new"
@@ -240,7 +243,7 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
             user = (
                 f"""Verarbeite die Korrektur oder Ergänzung zum vorherigen Befehl (dies kann auf Deutsch oder Englisch sein).
                 Deine Aufgabe ist es, die Informationen aus dem vorherigen Befehl zu übernehmen und die neuen Informationen zu ergänzen bzw auszutauschen.
-                Gib genau ein gültiges JSON-Objekt mit den Schlüsseln: "intent", "target_location", "action", "object", "object_index", "needs_clarification", "clarification_fields", "command_type" und "reference_index" zurück.
+                Gib genau ein gültiges JSON-Objekt mit den Schlüsseln: "intent", "target_location", "action", "object", "object_index", "selection_mode", "needs_clarification", "clarification_fields", "command_type" und "reference_index" zurück.
                 
                 MULTI-OBJEKT-KONTEXT: {object_context}
                 
@@ -249,6 +252,7 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
                 - "action": Die spezifischen Aktionen, um die Bewegung auszuführen.
                 - "object": Wähle nur aus den aktuell verfügbaren Objekten: {self.available_objects}. Das System unterstützt deutsche Objektnamen (z.B. "Zylinder" für "Cylinder").
                 - "object_index": Index des spezifischen Objekts (0 für erstes, 1 für zweites, etc.)
+                - "selection_mode": Verwende "gesture" für ein durch Zeigen bestimmtes Objekt und sonst "speech".
                 - "needs_clarification": true/false, ob weitere Klärung benötigt wird
                 - "clarification_fields": Liste der Felder, die Klärung benötigen
                 - "command_type": "correction"
@@ -316,12 +320,12 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
                     combined_result = {}
                     
                     # Übernimmt zuerst alle Werte aus dem letzten Befehl
-                    for key in ["intent", "target_location", "action", "object", "object_index"]:
+                    for key in ["intent", "target_location", "action", "object", "object_index", "selection_mode"]:
                         if key in last_cmd["result"] and last_cmd["result"][key] not in [None, "undefined", ""]:
                             combined_result[key] = last_cmd["result"][key]
                     
                     # Überschreibt mit neuen Werten aus der Korrektur
-                    for key in ["intent", "target_location", "action", "object", "object_index"]:
+                    for key in ["intent", "target_location", "action", "object", "object_index", "selection_mode"]:
                         if key in result and result[key] not in [None, "undefined", ""]:
                             combined_result[key] = result[key]
                     
@@ -350,12 +354,16 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
 
     def validate_extracted_info(self, info: dict) -> bool:
         """Validiert die extrahierten Informationen"""
-        required_fields = ["intent", "target_location", "action", "object"]
+        required_fields = ["intent", "target_location", "action"]
+        if info.get("selection_mode") != "gesture":
+            required_fields.append("object")
         return all(field in info and info[field] not in [None, "undefined", ""] for field in required_fields)
 
     def get_missing_fields(self, info: dict) -> list:
         """Gibt eine Liste der fehlenden Felder zurück"""
-        required_fields = ["intent", "target_location", "action", "object"]
+        required_fields = ["intent", "target_location", "action"]
+        if info.get("selection_mode") != "gesture":
+            required_fields.append("object")
         return [field for field in required_fields if field not in info or info[field] in [None, "undefined", ""]]
 
     def mark_command_executed(self, command_index: int = -1):
@@ -416,4 +424,4 @@ def main():
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 if __name__ == "__main__":
-    main() 
+    main()

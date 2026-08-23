@@ -16,16 +16,15 @@ gesture_selection_system/
 
 | class id | name             | role                                     |
 | -------- | ---------------- | ---------------------------------------- |
-| 0        | open_palm_start  | turns selection mode on                  |
-| 1        | closed_palm_stop | turns selection mode off                 |
-| 2        | pointing_finger  | confirms that the hand is pointing       |
-| 3        | index_fingertip  | carries the point used for the selection |
+| 0        | open_palm_start  | turns the standalone selection mode on   |
+| 1        | pointing_finger  | confirms that the hand is pointing       |
+| 2        | index_fingertip  | carries the point used for the selection |
 
 The same model covers bare hands and gloved hands. Glove support comes from the
 training data, the runtime has no separate glove path.
 
-Every confirmation is a five second hold, in seconds rather than frame counts,
-so the behaviour is the same on a fast machine and on a slow one.
+The standalone gesture pipeline uses five second holds. The speech integration
+uses a three second pointing hold because starting audio activates its session.
 
 `common/gesture_classes.py` holds the class order. The pipeline checks the
 downloaded checkpoint against it on load and refuses a mismatch.
@@ -33,7 +32,7 @@ downloaded checkpoint against it on load and refuses a mismatch.
 ## Steps
 
 1. Record videos, extract frames, label them in CVAT, export the YOLO dataset,
-   train YOLO11s on Ultralytics HUB, download `best.pt`.
+   train the gesture detector on Ultralytics HUB and download the checkpoint.
 2. Copy `best.pt` into `models/`.
 3. Run the pipeline.
 

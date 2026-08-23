@@ -1,3 +1,4 @@
+# MO_Changes
 """Fingertip geometry and object selection.
 
 No calibration is required here. The fingertip point and the object boxes are
@@ -74,6 +75,7 @@ class TouchResult:
     considered: int
     skipped_low_confidence: int
     skipped_off_center: int
+    inside_count: int
 
     @property
     def object_id(self) -> str | None:
@@ -91,6 +93,7 @@ def find_touched_object(
     considered = 0
     skipped_low_confidence = 0
     skipped_off_center = 0
+    inside_count = 0
 
     for candidate in objects:
         if candidate.confidence < confidence_threshold:
@@ -106,6 +109,7 @@ def find_touched_object(
         ):
             skipped_off_center += 1
             continue
+        inside_count += 1
         if best is None or candidate.box.area < best.box.area:
             best = candidate
 
@@ -114,6 +118,7 @@ def find_touched_object(
         considered=considered,
         skipped_low_confidence=skipped_low_confidence,
         skipped_off_center=skipped_off_center,
+        inside_count=inside_count,
     )
 
 

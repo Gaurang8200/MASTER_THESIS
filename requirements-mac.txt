@@ -1,6 +1,7 @@
 # MO_Changes
 # macOS with Python 3.11
-# System packages required: ffmpeg portaudio
+# Run before pip installation
+# brew install ffmpeg portaudio
 
 dill==0.3.8
 franky-sim==1.0.4

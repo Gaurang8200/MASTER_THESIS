@@ -3,11 +3,11 @@
 # already absolute.
 
 model:
-  # YOLO11s Detect weights downloaded from Ultralytics HUB.
-  weights: ../models/best.pt
+  # Gesture detection weights downloaded from Ultralytics HUB.
+  weights: ../models/handgestureyolov8m960100.pt
   # auto resolves to cuda, then mps, then cpu.
   device: auto
-  imgsz: 640
+  imgsz: 960
   half: false
   max_detections: 20
   # Frames slower than this budget are reported as degraded in the output.
@@ -17,8 +17,8 @@ model:
 # It reports bounding boxes and no segmentation masks.
 object_model:
   # Folder that holds the YOLOv5 source, the one with hubconf.py.
-  repo_path: "../../Object-Detection-Using-YOLO-v5-main 2/yolov5"
-  weights: "../../Object-Detection-Using-YOLO-v5-main 2/yolov5/my_model.pt"
+  repo_path: "../../../UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5"
+  weights: "../../../UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/my_model.pt"
   imgsz: 640
   # Overlap needed to keep an object id from one frame to the next. Without a
   # stable id the selection hold could never complete.
@@ -43,9 +43,8 @@ robot:
 # Mapping from gesture name to the class index used during training.
 class_ids:
   open_palm_start: 0
-  closed_palm_stop: 1
-  pointing_finger: 2
-  index_fingertip: 3
+  pointing_finger: 1
+  index_fingertip: 2
 
 confidence:
   # Palm and pointing gestures drive the mode transitions and need a strong score.
@@ -117,7 +116,7 @@ camera:
   width: 1280
   height: 720
   # Mirror the preview so that moving the hand right moves the overlay right.
-  flip_horizontal: true
+  flip_horizontal: false
 
 visualization:
   show_object_boxes: true
