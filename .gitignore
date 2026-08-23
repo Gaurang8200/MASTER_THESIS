@@ -13,10 +13,8 @@ Code/gesture_selection_system/data/
 Code/gesture_selection_system/Data_Collection/
 Code/gesture_selection_system/runs/
 
-# macOS archive metadata and the vendored virtualenv of the detection repository
+# macOS archive metadata
 __MACOSX/
-Code/Object-Detection-Using-YOLO-v5-main 2/work/
-Code/Object-Detection-Using-YOLO-v5-main 2/get-pip.py
 
 # Snapshot captures, virtualenvs, weights and datasets for the new subprojects
 Handgesture_FrankaEmika/snapshots/
