@@ -1,8 +1,8 @@
 # Software
 - pyenv 2.6.8
 - pyenv-virtualenv 1.2.4
-- python 3.10.15 (Verwaltet über pyenv)
-- installierte Pakete in requirements.txt
+- python 3.12 (Verwaltet über pyenv)
+- installierte Pakete in ../requirements-linux-x86_64.txt
 
 # Virtuelle Umgebung (Verwaltet über pyenv-virtualenv)
 - pyenv activate handtracking

@@ -46,7 +46,13 @@ Run this command from `UR_Audio_Steuerung_Using_LLM` with the project virtual
 environment active.
 
 ```bash
-python -m pip install -r franky_simulation_prototype/requirements.txt
+python -m pip install -r ../requirements-mac.txt
+```
+
+On Ubuntu x86 64 with Python 3.12 use
+
+```bash
+python -m pip install -r ../requirements-linux-x86_64.txt
 ```
 
 ## Preview the three dimensional workcell on macOS

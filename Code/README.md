@@ -17,8 +17,9 @@ See code for details.
 
 ## Quick Start
 
-1. Install dependencies:  
-   `pip install -r requirements.txt`
+1. Install macOS dependencies with `pip install -r ../requirements-mac.txt`
+   or Ubuntu x86 64 dependencies with
+   `pip install -r ../requirements-linux-x86_64.txt`
 2. Configure `config.yaml` and `.env`
 3. Run main app:  
    `python -m app.main`
