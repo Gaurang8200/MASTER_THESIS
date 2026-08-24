@@ -65,7 +65,10 @@ class OperatorFeedback:
         if sys.platform == "darwin" and shutil.which("say"):
             command = ["say", message]
         elif shutil.which("spd-say"):
-            command = ["spd-say", message]
+            command = ["spd-say"]
+            if wait_for_speech:
+                command.append("--wait")
+            command.append(message)
         if command is None:
             print("MULTIMODAL: No system speech command is available")
             return False

@@ -102,6 +102,7 @@ class SelectionConfig(BaseModel):
     # Setting a ratio also requires the fingertip to be that close to the box
     # centre, measured in half box widths. Leave it empty to accept the box.
     max_center_distance_ratio: float | None = Field(default=None, gt=0.0, le=1.0)
+    pointing_grace_seconds: float = Field(default=1.0, ge=0.0, le=2.0)
     require_pointing_finger: bool = True
     hold_selection_until_mode_off: bool = True
     require_selection_before_place: bool = True

@@ -45,6 +45,8 @@ selection:
   # Set a ratio between 0 and 1 to also require the fingertip to be that close to
   # the box center, measured in half box widths. Leave empty to accept the box.
   max_center_distance_ratio:
+  # Keep a recent valid pointing observation through brief detector flicker.
+  pointing_grace_seconds: 1.0
 
 camera:
   index: 0

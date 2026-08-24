@@ -164,6 +164,19 @@ def _parent_is_alive(parent_pid: int | None) -> bool:
     return parent_pid is None or os.getppid() == parent_pid
 
 
+def _recent_pointing_state(
+    detected: bool,
+    observed_at: float,
+    last_detected_at: float | None,
+    grace_seconds: float,
+) -> tuple[bool, float | None]:
+    if detected:
+        return True, observed_at
+    if last_detected_at is None:
+        return False, None
+    return observed_at - last_detected_at <= grace_seconds, last_detected_at
+
+
 def run_session(
     config: GestureConfig,
     session_id: str,
@@ -195,6 +208,7 @@ def run_session(
     camera = CameraStream(config.camera)
     frame_index = 0
     window_created = False
+    last_pointing_at: float | None = None
 
     try:
         gesture.start()
@@ -231,7 +245,14 @@ def run_session(
             gesture_frame = gesture.detect(frame, frame_index)
             objects = objects_source.get_objects(frame) if gesture_frame.ok else []
             fingertip = gesture_frame.best(GestureName.INDEX_FINGERTIP)
-            pointing_present = gesture_frame.has(GestureName.POINTING_FINGER)
+            observed_at = time.monotonic()
+            pointing_detected = gesture_frame.has(GestureName.POINTING_FINGER)
+            pointing_present, last_pointing_at = _recent_pointing_state(
+                pointing_detected,
+                observed_at,
+                last_pointing_at,
+                config.selection.pointing_grace_seconds,
+            )
             center = bbox_center(fingertip.box) if fingertip is not None else None
             sensor_center = (
                 camera.to_sensor_point(center, frame.shape)
@@ -253,7 +274,7 @@ def run_session(
             candidate_key = candidate.object_id if candidate is not None else None
             if selection_kind == "location" and center is not None and pointing_present:
                 candidate_key = place_grid_key(center)
-            hold = timer.update(candidate_key, time.monotonic())
+            hold = timer.update(candidate_key, observed_at)
             if hold.just_confirmed and candidate_key is not None:
                 selected = candidate
                 selection_complete = True

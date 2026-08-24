@@ -564,7 +564,7 @@ def _finish_recording():
        app.after_cancel(gesture_poll_job)
        gesture_poll_job = None
    if stop_listening:
-       stop_listening(wait_for_stop=False)
+       stop_listening(wait_for_stop=True)
        stop_listening = None
    btn_record.config(text="Start Recording")
    gesture_result = gesture_client.finish() if gesture_start_error is None else {
@@ -641,7 +641,31 @@ def toggle_recording():
 
    gesture_thread = threading.Thread(target=start_gesture_capture, daemon=True)
    gesture_thread.start()
+   gesture_thread.join(timeout=25.0)
+   if gesture_thread.is_alive():
+       gesture_start_error = "gesture process startup timed out"
+       gesture_client.cancel()
+       output_text.insert(
+           tk.END,
+           "MULTIMODAL: Gesture camera startup timed out.\n",
+       )
+       update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
+       return
+   gesture_start_error = gesture_outcome.get("error")
+   if gesture_start_error:
+       print(f"MULTIMODAL: Gesture process could not start. {gesture_start_error}")
+       gesture_client.cancel()
+       output_text.insert(
+           tk.END,
+           f"MULTIMODAL: Gesture process could not start. {gesture_start_error}\n",
+       )
+       update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
+       return
+   session = gesture_outcome["session"]
+   print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
+
    try:
+       print(f"MICROPHONE: Starting selected input index {idx}")
        recognizer = sr.Recognizer()
        microphone = sr.Microphone(device_index=idx)
        with microphone as source:
@@ -651,23 +675,12 @@ def toggle_recording():
            callback,
            phrase_time_limit=5,
        )
+       print("MICROPHONE: Background listener started")
    except Exception as error:
-       gesture_thread.join(timeout=25.0)
        gesture_client.cancel()
        output_text.insert(tk.END, f"MICROPHONE: Could not start the selected input. {error}\n")
        update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
        return
-   gesture_thread.join(timeout=25.0)
-   if gesture_thread.is_alive():
-       gesture_start_error = "gesture process startup timed out"
-       gesture_client.cancel()
-   else:
-       gesture_start_error = gesture_outcome.get("error")
-   if gesture_start_error:
-       print(f"MULTIMODAL: Gesture process could not start. {gesture_start_error}")
-   else:
-       session = gesture_outcome["session"]
-       print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
    recording = True
    btn_record.config(text="Stop Recording")
    update_workflow_status(WorkflowStatus.PROCESSING)
@@ -782,7 +795,7 @@ def _collect_destination_methods():
                    reminder_at = time.monotonic() + 120.0
                time.sleep(0.1)
        finally:
-           stop_destination_audio(wait_for_stop=False)
+           stop_destination_audio(wait_for_stop=True)
            gesture_client.finish()
        if chosen_zone is not None:
            prompt = f"Do you want me to place the object in {chosen_zone.replace('_', ' ')}?"
