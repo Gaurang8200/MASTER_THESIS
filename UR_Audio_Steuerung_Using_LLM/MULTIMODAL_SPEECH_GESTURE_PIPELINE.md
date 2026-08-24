@@ -273,6 +273,20 @@ This rule is included in both OpenAI prompts and is enforced again by determinis
 
 The gesture only workflow previously reached Franka precision detection and then stopped with `name 'os' is not defined`. The workflow uses `os.environ` to select Franka perception temporarily, but its module did not import the Python `os` library. The required import is now present. Gesture selection, spoken confirmation, robot calibration, and movement order are unchanged.
 
+## Franka real camera alignment
+
+The original Franka calibration converts a sensor pixel with `calibration x = image width minus sensor x`. The integrated transformer applies this same conversion through `mirror_x` before calling the original pixel transformation.
+
+The first movement positions the camera above the selected object for precision detection. Its configured correction is derived from `output_c2f.json` and the downward Franka orientation used by the workflow.
+
+| Axis | Flange correction |
+| --- | --- |
+| X | negative 0.056249852 metres |
+| Y | negative 0.009568764 metres |
+| Z | negative 0.031028437 metres |
+
+The earlier positive 0.084 metre X value belonged to the temporary Universal Robot alignment assumption and is no longer used for Franka. Precision perception subprocesses use the active project Python environment rather than a nested environment inside the detection folder.
+
 ## Safety result
 
 No robot method list is accepted when the gesture result is missing or stale, pointing does not identify one object, confidence is too low, the live object is absent from the overview list, the overview match is ambiguous, spoken yes is missing, verification detection fails, or the session contract is invalid.
