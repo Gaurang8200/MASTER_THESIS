@@ -250,15 +250,30 @@ class FrankaAudioWorkflow:
         point = self._require_selected_point()
         object_class = self._require_selected_class()
         orientation = self._context.selected_orientation or self._config.default_orientation
+        pick_height = self._config.pick_height(object_class)
+        alignment_height = max(self._config.lift_height, pick_height)
+        self._output("FRANKA GRIPPER: Opening before pickup approach")
+        self._arm.release()
         self._output(
-            "FRANKA PICK COORDINATES: "
+            "FRANKA PICK ALIGNMENT: "
             f"x={point.x:.4f}, y={point.y:.4f}, "
-            f"z={self._config.pick_height(object_class):.4f}"
+            f"z={alignment_height:.4f}"
         )
         self._move_cartesian(
             point.x,
             point.y,
-            self._config.pick_height(object_class),
+            alignment_height,
+            orientation,
+        )
+        self._output(
+            "FRANKA PICK COORDINATES: "
+            f"x={point.x:.4f}, y={point.y:.4f}, "
+            f"z={pick_height:.4f}"
+        )
+        self._move_cartesian(
+            point.x,
+            point.y,
+            pick_height,
             orientation,
         )
 
