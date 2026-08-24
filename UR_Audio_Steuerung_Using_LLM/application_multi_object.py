@@ -397,12 +397,32 @@ def _transcribe_audio(audio, filename):
    return SpeechToTextLocal().transcribe(audio_path)
 
 
+def _request_click_confirmation(prompt, reason):
+   feedback = _operator_feedback()
+   feedback.publish("Speech confirmation was not recognized. Use the confirmation window.")
+   approved = messagebox.askyesno(
+       "Robot Confirmation",
+       _tk_safe_text(
+           f"{prompt}\n\n"
+           f"Speech confirmation status: {reason}\n\n"
+           "Click Yes to approve this robot action or No to cancel."
+       ),
+       parent=app,
+   )
+   if approved:
+       print("MULTIMODAL CONFIRMATION: Accepted with interface Yes button")
+       feedback.publish("Command confirmed with the interface Yes button.")
+       return True
+   print("MULTIMODAL CONFIRMATION: Rejected with interface No button")
+   feedback.publish("Command cancelled with the interface No button.")
+   return False
+
+
 def _listen_for_confirmation(prompt):
    feedback = _operator_feedback()
    idx = mic_mapping.get(mic_var.get())
    if idx is None:
-       feedback.publish("A microphone is required for confirmation.")
-       return False
+       return _request_click_confirmation(prompt, "microphone unavailable")
    attempts = ((prompt, 10.0), ("Please answer yes or no.", 5.0))
    for attempt_prompt, timeout_seconds in attempts:
        feedback.publish(attempt_prompt, wait_for_speech=True)
@@ -420,15 +440,14 @@ def _listen_for_confirmation(prompt):
            continue
        except Exception as error:
            feedback.publish(f"Confirmation could not be captured. {error}")
-           return False
+           return _request_click_confirmation(prompt, "microphone capture failed")
        if is_affirmative(answer):
            feedback.publish("Command confirmed.")
            return True
        if is_negative(answer):
            feedback.publish("Command cancelled.")
            return False
-   feedback.publish("No explicit yes was received. The robot will not move.")
-   return False
+   return _request_click_confirmation(prompt, "spoken answer not recognized")
 
 
 def _write_selection_data(info, gesture_result):
