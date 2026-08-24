@@ -17,11 +17,8 @@ PREDECESSOR_DIR = os.path.join(PROJECT_ROOT, "Code-YOLOv5-Windows_llm")
 if PREDECESSOR_DIR not in sys.path:
     sys.path.insert(0, PREDECESSOR_DIR)
 
-# Python-Interpreter des Vorgänger-venv
-if os.name == "nt":
-    PRE_PYTHON = os.path.join(PREDECESSOR_DIR, "venv", "Scripts", "python.exe")
-else:
-    PRE_PYTHON = os.path.join(PREDECESSOR_DIR, "venv", "bin", "python")
+# Use the active project environment for every perception subprocess
+PRE_PYTHON = sys.executable
 
 # Global simulation mode flag
 simulation_mode = False
@@ -1200,8 +1197,18 @@ def precision_detection(robot_ip):
     try:
         # Führe detection_multi_precision_run.py aus
         detection_script = os.path.join(PREDECESSOR_DIR, 'detection_multi_precision_run.py')
-        subprocess.run([PRE_PYTHON, detection_script], cwd=PREDECESSOR_DIR,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        result = subprocess.run(
+            [PRE_PYTHON, detection_script],
+            cwd=PREDECESSOR_DIR,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            details = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(
+                "Precision detection failed with return code "
+                f"{result.returncode}. {details}"
+            )
     finally:
         # Stelle ursprüngliche Environment Variable wieder her
         if original_env_mode is None:
