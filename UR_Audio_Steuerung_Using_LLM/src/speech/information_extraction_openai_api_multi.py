@@ -33,6 +33,38 @@ OBJECT_TRANSLATIONS = {
     "cube": "box"
 }
 
+DESTINATION_ACTION_WORDS = {
+    "bring",
+    "bewege",
+    "bewegen",
+    "drop",
+    "lege",
+    "legen",
+    "move",
+    "place",
+    "platziere",
+    "platzieren",
+    "put",
+    "stelle",
+    "stellen",
+}
+
+PICK_ONLY_ACTION_WORDS = {
+    "aufheben",
+    "greife",
+    "greifen",
+    "grab",
+    "grasp",
+    "halte",
+    "halten",
+    "hold",
+    "nimm",
+    "nehmen",
+    "pick",
+    "pickup",
+    "take",
+}
+
 class CommandHistory:
     def __init__(self, max_history: int = 5):
         self.max_history = max_history
@@ -168,6 +200,20 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
         # Hole die letzten zwei Befehle für den Kontext
         last_commands = self.command_history.history[-2:] if len(self.command_history.history) >= 2 else self.command_history.history
 
+        destination_policy = """
+                ZIELREGELN:
+                Eine reine Aufnahmeaktion wie pick up, take, grasp, hold, nehmen, greifen oder halten braucht keine target_location.
+                Wenn nur eine Aufnahmeaktion verlangt wird, setze target_location auf null, needs_clarification auf false und clarification_fields auf eine leere Liste.
+                Eine Transferaktion wie move, place, put, drop, bewegen, platzieren, legen oder stellen braucht eine target_location.
+                Wenn bei einer Transferaktion das Ziel fehlt, setze needs_clarification auf true und fuege target_location zu clarification_fields hinzu.
+
+                Beispiele:
+                Pick up the cylinder ergibt target_location null und keine Klaerung.
+                Move the cylinder ergibt target_location null und target_location als Klaerungsfeld.
+                Move the cylinder to Zone 2 ergibt target_location Zone_2 und keine Klaerung.
+                Pick up this object ergibt selection_mode gesture, object null, target_location null und keine Klaerung.
+                """
+
         if command_type == "new":
             system = (
                 "You are an assistant for a robotics application with multi-object detection capabilities. "
@@ -209,6 +255,8 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
                 - Wenn der Benutzer sagt "bewege den ersten Zylinder" oder "nimm den zweiten Marker", extrahiere object_index entsprechend (0 für ersten, 1 für zweiten, etc.)
                 - Wenn der Benutzer sagt "bewege den Zylinder" ohne Spezifikation und mehrere Zylinder vorhanden sind, verwende object_index 0 (ersten)
                 - Wenn nur ein Objekt des Typs vorhanden ist, ist object_index immer 0
+
+                {destination_policy}
 
                 Sollten die Informationen nicht klar ersichtlich sein aus dem Befehl, setze needs_clarification auf true und gib die Felder an, die benötigt werden.
                 
@@ -257,6 +305,8 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
                 - "clarification_fields": Liste der Felder, die Klärung benötigen
                 - "command_type": "correction"
                 - "reference_index": null
+
+                {destination_policy}
 
                 vorheriger Befehl = {history_context}
 
@@ -332,10 +382,20 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
                     # Aktualisieren
                     result.update(combined_result)
                 
-                # Validieren
-                if not self.validate_extracted_info(result):
-                    result["needs_clarification"] = True
-                    result["clarification_fields"] = self.get_missing_fields(result)
+                # Apply deterministic validation after the model response
+                missing_fields = self.get_missing_fields(result)
+                clarification_fields = list(result.get("clarification_fields") or [])
+                if "target_location" not in missing_fields:
+                    clarification_fields = [
+                        field
+                        for field in clarification_fields
+                        if field != "target_location"
+                    ]
+                for field in missing_fields:
+                    if field not in clarification_fields:
+                        clarification_fields.append(field)
+                result["clarification_fields"] = clarification_fields
+                result["needs_clarification"] = bool(clarification_fields)
                 
                 # Setze object_index default auf 0 wenn nicht gesetzt
                 if "object_index" not in result:
@@ -354,14 +414,25 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
 
     def validate_extracted_info(self, info: dict) -> bool:
         """Validiert die extrahierten Informationen"""
-        required_fields = ["intent", "target_location", "action"]
-        if info.get("selection_mode") != "gesture":
-            required_fields.append("object")
-        return all(field in info and info[field] not in [None, "undefined", ""] for field in required_fields)
+        return not self.get_missing_fields(info)
+
+    @staticmethod
+    def command_requires_destination(info: dict) -> bool:
+        """Return whether the extracted command must name a destination."""
+        intent = str(info.get("intent") or "").lower()
+        action = str(info.get("action") or "").lower()
+        words = set(re.findall(r"[a-zA-Zäöüß]+", f"{intent} {action}"))
+        if words & DESTINATION_ACTION_WORDS:
+            return True
+        if words & PICK_ONLY_ACTION_WORDS:
+            return False
+        return True
 
     def get_missing_fields(self, info: dict) -> list:
         """Gibt eine Liste der fehlenden Felder zurück"""
-        required_fields = ["intent", "target_location", "action"]
+        required_fields = ["intent", "action"]
+        if self.command_requires_destination(info):
+            required_fields.append("target_location")
         if info.get("selection_mode") != "gesture":
             required_fields.append("object")
         return [field for field in required_fields if field not in info or info[field] in [None, "undefined", ""]]

@@ -522,10 +522,13 @@ def _prepare_command(text, gesture_result):
        info["object_index"] = multimodal.object_index
        info["selection_mode"] = "gesture"
        info["gesture_session_id"] = gesture_result.get("session_id")
+   resolved_fields = set()
+   if multimodal.required and multimodal.selected_object is not None:
+       resolved_fields.add("object")
    clarification_fields = [
        field
        for field in (info.get("clarification_fields") or [])
-       if field not in {"object", "target_location"}
+       if field not in resolved_fields
    ]
    info["clarification_fields"] = clarification_fields
    info["needs_clarification"] = bool(clarification_fields)

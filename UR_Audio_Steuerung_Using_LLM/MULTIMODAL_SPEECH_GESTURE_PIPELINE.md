@@ -169,7 +169,7 @@ flowchart TD
     F -->|"Zero boxes"| G["Keep searching"]
     F -->|"More than one box"| H["Keep searching because pointing is ambiguous"]
     F -->|"Exactly one box"| I["Stable hold timer"]
-    I -->|"Three seconds"| J["Safe live selection"]
+    I -->|"Five seconds"| J["Safe live selection"]
     J -->|"Same object remains selected"| K["Continue updating hold time"]
     K -->|"Ten seconds"| L["Automatically finish gesture only interaction"]
 ```
@@ -253,6 +253,25 @@ The live gesture process creates temporary tracking IDs. The robot uses the IDs 
 `Drop at Zone 2` uses the taught Zone 2 coordinates and ignores pointing.
 
 `Drop here` uses the current fingertip pixel. Universal Robot applies its existing calibration matrix. Franka applies its original Franka calibration matrix. Both use the selected object class to set the existing placement height.
+
+## Command destination policy
+
+The earlier validation required a destination for every command. This incorrectly marked `Pick up the cylinder` as incomplete even though the robot can pick the object, move to the intermediate position, and request the destination afterward.
+
+The corrected policy separates pickup commands from transfer commands.
+
+| Spoken command | Destination required now | Result |
+| --- | --- | --- |
+| `Pick up the cylinder` | No | Pick after confirmation, then wait at the intermediate position |
+| `Pick up this object` | No | Resolve the pointed object, ask for confirmation, then pick |
+| `Move the cylinder` | Yes | Ask which destination should be used |
+| `Move the cylinder to Zone 2` | Yes and supplied | Run the confirmed pick and place workflow |
+
+This rule is included in both OpenAI prompts and is enforced again by deterministic Python validation. The Python rule remains authoritative if the model returns inconsistent clarification fields.
+
+## Franka gesture only execution correction
+
+The gesture only workflow previously reached Franka precision detection and then stopped with `name 'os' is not defined`. The workflow uses `os.environ` to select Franka perception temporarily, but its module did not import the Python `os` library. The required import is now present. Gesture selection, spoken confirmation, robot calibration, and movement order are unchanged.
 
 ## Safety result
 
