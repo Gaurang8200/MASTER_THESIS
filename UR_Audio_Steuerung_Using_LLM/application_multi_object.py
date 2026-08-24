@@ -21,6 +21,35 @@ from tkinter import ttk, messagebox
 import speech_recognition as sr
 from dotenv import load_dotenv
 import threading
+import unicodedata
+
+
+def _tk_safe_text(value: str) -> str:
+   if not sys.platform.startswith("linux"):
+       return value
+   replacements = str.maketrans(
+       {
+           "ä": "ae",
+           "ö": "oe",
+           "ü": "ue",
+           "Ä": "Ae",
+           "Ö": "Oe",
+           "Ü": "Ue",
+           "ß": "ss",
+           "→": " to ",
+           "←": " from ",
+           "↓": " then ",
+           "↑": " up ",
+           "•": "*",
+       }
+   )
+   normalized = unicodedata.normalize("NFKD", value.translate(replacements))
+   return normalized.encode("ascii", "ignore").decode("ascii")
+
+
+class CrossPlatformText(tk.Text):
+   def insert(self, index: str, chars: str, *args: str) -> None:
+       super().insert(index, _tk_safe_text(chars), *args)
 
 # Multi-Object System Imports
 from src.speech.speech_to_text_local import SpeechToTextLocal
@@ -105,7 +134,7 @@ gesture_poll_job = None
 class WorkflowStatus:
    READY_FOR_DETECTION = "BEREIT: Objekte erfassen"
    READY_FOR_COMMANDS  = "BEREIT: Sprachbefehle"
-   READY_FOR_EXECUTION = "BEREIT: Ausführung"
+   READY_FOR_EXECUTION = _tk_safe_text("BEREIT: Ausführung")
    PROCESSING          = "VERARBEITUNG..."
    SIMULATING          = "SIMULATION AKTIV"
 
@@ -778,7 +807,10 @@ def execute_workflow_handler():
     try:
         # Check if robot methods exist
         if not robot_methods:
-            messagebox.showwarning("Warnung", "Keine Roboter-Methoden ausgewählt!")
+            messagebox.showwarning(
+                "Warnung",
+                _tk_safe_text("Keine Roboter-Methoden ausgewählt!"),
+            )
             return
         
         # Clear output first
@@ -1332,7 +1364,7 @@ status_label.pack()
 
 workflow_help = ttk.Label(
    status_frame,
-   text="1. Detect Objects → 2. Voice Command → 3. Execute",
+   text=_tk_safe_text("1. Detect Objects → 2. Voice Command → 3. Execute"),
    font=("Arial", 8), foreground="gray"
 )
 workflow_help.pack()
@@ -1437,19 +1469,27 @@ right_frame = ttk.Frame(main_frame)
 right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 ttk.Label(right_frame, text="Detected Objects:").pack(anchor="w")
-object_text = tk.Text(right_frame, height=8, width=60, bg="#E8F5E8")
+object_text = CrossPlatformText(right_frame, height=8, width=60, bg="#E8F5E8")
 object_text.pack(fill=tk.X, pady=(0,10))
 
-ttk.Label(right_frame, text="Klärungshinweise:").pack(anchor="w")
-clarification_text = tk.Text(right_frame, height=3, width=60, bg="#FFF3CD")
+ttk.Label(
+   right_frame,
+   text=_tk_safe_text("Klärungshinweise:"),
+).pack(anchor="w")
+clarification_text = CrossPlatformText(
+   right_frame,
+   height=3,
+   width=60,
+   bg="#FFF3CD",
+)
 clarification_text.pack(fill=tk.X, pady=(0,10))
 
 ttk.Label(right_frame, text="Command History:").pack(anchor="w")
-history_text = tk.Text(right_frame, height=10, width=60)
+history_text = CrossPlatformText(right_frame, height=10, width=60)
 history_text.pack(fill=tk.X, pady=(0,10))
 
 ttk.Label(right_frame, text="Current Output:").pack(anchor="w")
-output_text = tk.Text(right_frame, height=15, width=60)
+output_text = CrossPlatformText(right_frame, height=15, width=60)
 output_text.pack(fill=tk.BOTH, expand=True)
 
 # Initialize displays and button states
