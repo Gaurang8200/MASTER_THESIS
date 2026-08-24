@@ -18,6 +18,9 @@ Code/gesture_selection_system/data/
 Code/gesture_selection_system/Data_Collection/
 Code/gesture_selection_system/runs/
 
+# macOS archive metadata
+__MACOSX/
+
 # Snapshot captures, virtualenvs, weights and datasets for the new subprojects
 Handgesture_FrankaEmika/snapshots/
 UR_Audio_Steuerung_Using_LLM/venv_wrapper/
@@ -45,4 +48,3 @@ UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/txt_file/*
 UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/runs/
 UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/txt_file/
 UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/requirements.txt
-
