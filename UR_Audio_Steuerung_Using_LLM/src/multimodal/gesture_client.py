@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -91,6 +92,8 @@ class GestureProcessClient:
             selection_kind,
             "--hold-seconds",
             str(hold_seconds),
+            "--parent-pid",
+            str(os.getpid()),
         ]
         if not self._display:
             command.append("--no-display")

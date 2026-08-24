@@ -9,6 +9,7 @@ threshold fails at startup instead of during a live robot session.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import yaml
@@ -224,6 +225,7 @@ class CameraConfig(BaseModel):
     index: int = Field(default=0, ge=0)
     width: int = Field(default=1280, ge=64)
     height: int = Field(default=720, ge=64)
+    rotation_degrees: Literal[0, 180] = 0
     flip_horizontal: bool = True
 
 

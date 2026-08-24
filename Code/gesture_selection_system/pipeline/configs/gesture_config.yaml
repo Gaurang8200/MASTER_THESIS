@@ -50,5 +50,7 @@ camera:
   index: 0
   width: 1280
   height: 720
+  # Use 180 for the current upside down camera or 0 for normal orientation.
+  rotation_degrees: 180
   # Mirror the preview so that moving the hand right moves the overlay right.
   flip_horizontal: false

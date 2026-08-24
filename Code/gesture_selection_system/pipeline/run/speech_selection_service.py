@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -27,6 +28,7 @@ from schemas import DetectedObject, GestureFrame, SelectionMode
 
 LOGGER = logging.getLogger(__name__)
 CONTRACT_VERSION = "1.0"
+WINDOW_NAME = "multimodal fingertip selection"
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -46,13 +48,22 @@ def _stop_requested(path: Path) -> bool:
     return payload.get("command") == "stop"
 
 
-def _object_payload(item: DetectedObject) -> dict[str, object]:
-    center_x, center_y = item.box.center
+def _object_payload(
+    item: DetectedObject,
+    camera: CameraStream,
+    frame_shape: tuple[int, ...],
+) -> dict[str, object]:
+    sensor_box = camera.to_sensor_box(
+        (item.box.x1, item.box.y1, item.box.x2, item.box.y2),
+        frame_shape,
+    )
+    center_x = (sensor_box[0] + sensor_box[2]) / 2.0
+    center_y = (sensor_box[1] + sensor_box[3]) / 2.0
     return {
         "live_object_id": item.object_id,
         "class_name": item.class_name,
         "confidence": item.confidence,
-        "bbox": [item.box.x1, item.box.y1, item.box.x2, item.box.y2],
+        "bbox": list(sensor_box),
         "center": [center_x, center_y],
     }
 
@@ -136,8 +147,21 @@ def _render(
     if fingertip_center is not None:
         draw_fingertip(canvas, fingertip_center, 10, True)
     draw_hud(canvas, ("speech gesture selection", reason, "q cancel"), SelectionMode.ON)
-    cv2.imshow("multimodal fingertip selection", canvas)
+    cv2.imshow(WINDOW_NAME, canvas)
     return cv2.waitKey(1) & 0xFF
+
+
+def _window_is_visible() -> bool:
+    import cv2
+
+    try:
+        return cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) >= 1.0
+    except cv2.error:
+        return False
+
+
+def _parent_is_alive(parent_pid: int | None) -> bool:
+    return parent_pid is None or os.getppid() == parent_pid
 
 
 def run_session(
@@ -150,6 +174,7 @@ def run_session(
     hold_seconds: float,
     selection_kind: str,
     display: bool,
+    parent_pid: int | None,
 ) -> int:
     gesture = GestureDetector(
         model_config=config.model,
@@ -169,6 +194,7 @@ def run_session(
     display_reason = str(result["reason"])
     camera = CameraStream(config.camera)
     frame_index = 0
+    window_created = False
 
     try:
         gesture.start()
@@ -185,7 +211,13 @@ def run_session(
         started = time.monotonic()
 
         while timeout_seconds <= 0.0 or time.monotonic() - started < timeout_seconds:
+            if not _parent_is_alive(parent_pid):
+                result = _base_result(session_id, "rejected", "parent_process_stopped")
+                break
             if _stop_requested(request_file):
+                break
+            if display and window_created and not _window_is_visible():
+                result = _base_result(session_id, "rejected", "operator_cancelled")
                 break
 
             frame = camera.read()
@@ -201,6 +233,11 @@ def run_session(
             fingertip = gesture_frame.best(GestureName.INDEX_FINGERTIP)
             pointing_present = gesture_frame.has(GestureName.POINTING_FINGER)
             center = bbox_center(fingertip.box) if fingertip is not None else None
+            sensor_center = (
+                camera.to_sensor_point(center, frame.shape)
+                if center is not None
+                else None
+            )
 
             touch = None
             if selection_kind == "object" and center is not None and pointing_present:
@@ -230,12 +267,14 @@ def run_session(
                     "frame_index": frame_index,
                     "frame_width": int(frame.shape[1]),
                     "frame_height": int(frame.shape[0]),
-                    "fingertip_pixel": [center[0], center[1]],
+                    "fingertip_pixel": [sensor_center[0], sensor_center[1]],
                     "fingertip_confidence": fingertip.confidence,
                     "pointing_finger_present": True,
                     "objects_considered": touch.considered if touch is not None else 0,
                     "selected_object": (
-                        _object_payload(candidate) if candidate is not None else None
+                        _object_payload(candidate, camera, frame.shape)
+                        if candidate is not None
+                        else None
                     ),
                     "hold_seconds": hold.held_s,
                     "latency_ms": round((time.perf_counter() - frame_started) * 1000.0, 3),
@@ -248,7 +287,11 @@ def run_session(
                 and candidate_key == confirmed_key
             ):
                 result["hold_seconds"] = hold.held_s
-                result["fingertip_pixel"] = [center[0], center[1]] if center else None
+                result["fingertip_pixel"] = (
+                    [sensor_center[0], sensor_center[1]]
+                    if sensor_center is not None
+                    else None
+                )
                 result["last_seen_at_unix_s"] = time.time()
                 result["frame_index"] = frame_index
                 result["latency_ms"] = round(
@@ -282,7 +325,11 @@ def run_session(
                     "frame_index": frame_index,
                     "frame_width": int(frame.shape[1]),
                     "frame_height": int(frame.shape[0]),
-                    "fingertip_pixel": [center[0], center[1]] if center is not None else None,
+                    "fingertip_pixel": (
+                        [sensor_center[0], sensor_center[1]]
+                        if sensor_center is not None
+                        else None
+                    ),
                     "fingertip_confidence": fingertip.confidence if fingertip is not None else None,
                     "pointing_finger_present": pointing_present,
                     "objects_considered": len(objects),
@@ -300,6 +347,7 @@ def run_session(
                     selected.object_id if selected is not None else None,
                     display_reason,
                 )
+                window_created = True
                 if key == ord("q"):
                     result = _base_result(session_id, "rejected", "operator_cancelled")
                     break
@@ -344,6 +392,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--timeout-seconds", type=float, default=0.0)
     parser.add_argument("--hold-seconds", type=float, default=3.0)
+    parser.add_argument("--parent-pid", type=int, default=None)
     parser.add_argument(
         "--selection-kind",
         choices=("object", "location"),
@@ -370,6 +419,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         hold_seconds=arguments.hold_seconds,
         selection_kind=arguments.selection_kind,
         display=arguments.display,
+        parent_pid=arguments.parent_pid,
     )
 
 
