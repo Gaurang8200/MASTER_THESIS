@@ -1,8 +1,10 @@
+# MO_Changes
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 import os
+from pathlib import Path
 
 
 def apply_watershed(image, margin=10):
@@ -94,8 +96,7 @@ image = cv2.imread(image_path)
 result, border_points = apply_watershed(image)
 
 
-border_parts = os.path.join(*image_path.split(os.sep)[:4])
-output_path_border = os.path.join(border_parts, "border_1.jpg")
+output_path_border = str(Path(image_path).resolve().with_name("border_1.jpg"))
 
 
 cv2.imwrite(output_path_border, result)
@@ -136,7 +137,7 @@ plt.title('PCA')
 plt.axis('equal')
 plt.grid(True)
 
-output_path_pca = os.path.join(border_parts, "pca_1.jpg")
+output_path_pca = str(Path(image_path).resolve().with_name("pca_1.jpg"))
 
 # Save the figure to a file and close the plot
 plt.savefig(output_path_pca, format='jpg', dpi=300)

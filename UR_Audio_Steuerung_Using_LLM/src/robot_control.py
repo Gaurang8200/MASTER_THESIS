@@ -1227,10 +1227,11 @@ def precision_pca_calculation(robot_ip):
     else:
         print("[DEBUG] precision_pca_calculation → running PCA analysis")
     
-    # Führe pca_multi.py aus
-    pca_script = os.path.join(PREDECESSOR_DIR, 'pca_multi.py')
-    subprocess.run([PRE_PYTHON, pca_script], cwd=PREDECESSOR_DIR,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _run_precision_stage(
+        "pca_multi.py",
+        os.path.join(PREDECESSOR_DIR, "txt_file", "vectors.txt"),
+        "PCA",
+    )
     
     if simulation_mode:
         sim_print("SUCCESS: Precision PCA analysis completed")
@@ -1242,13 +1243,36 @@ def precision_direction_object(robot_ip):
     else:
         print("[DEBUG] precision_direction_object → calculating direction")
     
-    # Führe direction_multi.py aus  
-    direction_script = os.path.join(PREDECESSOR_DIR, 'direction_multi.py')
-    subprocess.run([PRE_PYTHON, direction_script], cwd=PREDECESSOR_DIR,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _run_precision_stage(
+        "direction_multi.py",
+        os.path.join(PREDECESSOR_DIR, "txt_file", "robot_RPY.txt"),
+        "direction",
+    )
     
     if simulation_mode:
         sim_print("SUCCESS: Precision direction calculation completed")
+
+
+def _run_precision_stage(script_name: str, output_path: str, stage_name: str) -> None:
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    script_path = os.path.join(PREDECESSOR_DIR, script_name)
+    result = subprocess.run(
+        [PRE_PYTHON, script_path],
+        cwd=PREDECESSOR_DIR,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        details = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(
+            f"Precision {stage_name} failed with return code "
+            f"{result.returncode}. {details[-4000:]}"
+        )
+    if not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError(
+            f"Precision {stage_name} did not create required output {output_path}"
+        )
 
 # Standard-Roboter-IP
 robot_ip = '192.168.2.180'

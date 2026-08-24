@@ -1,8 +1,10 @@
+# MO_Changes
 import cv2
 import numpy as np
 import math
 from scipy.spatial.transform import Rotation as R
 import os
+from pathlib import Path
 
 def draw_arrows(image, origin, length1, angle1, length2, angle2):
     
@@ -54,8 +56,15 @@ def draw_arrows(image, origin, length1, angle1, length2, angle2):
 
 # Load all Image Path
 def image_path():
-    with open(r"txt_file\detect_img_path.txt", "r") as file:
-        return file.read()
+    with open(os.path.join("txt_file", "detect_img_path.txt"), "r") as file:
+        stored_path = Path(file.read().strip())
+    candidates = [stored_path]
+    if not stored_path.is_absolute():
+        candidates.extend((Path.cwd() / stored_path, Path.cwd() / "yolov5" / stored_path))
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    raise FileNotFoundError(f"Detection image does not exist: {stored_path}")
 
 # Load an existing image
 image_path = image_path()
@@ -180,17 +189,13 @@ def calculate_vectors(file_path):
         return None, None, None, None
 
 # Calculate lengths and angles using the function
-path = r'txt_file\vectors.txt'
+path = os.path.join("txt_file", "vectors.txt")
 length1, angle1, length2, angle2 = calculate_vectors(path)
 
 # Draw the arrows on the image
 image_with_arrows = draw_arrows(image, origin, length1, angle1, length2, angle2)
 
-# Define Path for saving the file
-base_path = os.path.join(*image_path.split(os.sep)[:4])
-
-# Append the desired file name
-output_path_direction = os.path.join(base_path, "direction_1.jpg")
+output_path_direction = str(Path(image_path).with_name("direction_1.jpg"))
 
 # Save the image to a desired path
 cv2.imwrite(output_path_direction, image_with_arrows)
