@@ -10,6 +10,9 @@ from collections.abc import Callable
 
 
 REJECTION_MESSAGES = {
+    "pointed_object_not_in_detection_list": (
+        "Fingertip and pointing finger were detected, but the pointed object does not match the detected object list."
+    ),
     "fingertip_outside_object_boxes": (
         "Object is not detected. Point inside a detected object box and try again."
     ),
@@ -24,6 +27,9 @@ REJECTION_MESSAGES = {
     ),
     "fingertip_not_detected": "Your fingertip was not detected. Point at an object and try again.",
     "pointing_finger_not_detected": "A pointing gesture was not detected. Point and try again.",
+    "pointing_not_stable": (
+        "The pointed object was detected, but the pointing position was not held continuously for five seconds."
+    ),
     "selection_timed_out": "No object was selected in time. Point at an object and try again.",
     "gesture_process_not_started": "Gesture selection could not start. Check the camera and model.",
     "camera_unavailable": "Gesture selection could not open the camera. Check macOS camera permission.",
@@ -46,15 +52,15 @@ class OperatorFeedback:
         self.publish(message)
         return message
 
-    def publish(self, message: str) -> None:
+    def publish(self, message: str, wait_for_speech: bool = False) -> None:
         terminal_message = f"MULTIMODAL: {message}"
         print(terminal_message)
         if self._ui_writer is not None:
             self._ui_writer(terminal_message + "\n")
-        self._speak(message)
+        self._speak(message, wait_for_speech)
 
     @staticmethod
-    def _speak(message: str) -> bool:
+    def _speak(message: str, wait_for_speech: bool = False) -> bool:
         command: list[str] | None = None
         if sys.platform == "darwin" and shutil.which("say"):
             command = ["say", message]
@@ -63,9 +69,6 @@ class OperatorFeedback:
         if command is None:
             print("MULTIMODAL: No system speech command is available")
             return False
-        subprocess.Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        runner = subprocess.run if wait_for_speech else subprocess.Popen
+        runner(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True

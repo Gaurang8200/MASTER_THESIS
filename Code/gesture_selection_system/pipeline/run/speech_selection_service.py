@@ -19,7 +19,7 @@ for _folder in ("support", "detection", "logic"):
 
 from camera import CameraStream
 from config import GestureConfig, load_config, resolve_device
-from fingertip_selection import HoldTimer, bbox_center, find_touched_object
+from fingertip_selection import HoldTimer, bbox_center, find_touched_object, place_grid_key
 from gesture_classes import GestureName
 from gesture_detector import GestureDetector
 from object_detector import Yolov5ObjectDetector
@@ -77,6 +77,27 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
     }
 
 
+REJECTION_INFORMATION_RANK = {
+    "no_usable_frame": 0,
+    "gesture_inference_failed": 1,
+    "fingertip_not_detected": 2,
+    "pointing_finger_not_detected": 3,
+    "pointed_object_not_in_detection_list": 4,
+    "pointing_is_ambiguous": 5,
+    "pointing_not_stable": 6,
+}
+
+
+def _prefer_informative_rejection(
+    current: dict[str, object],
+    candidate: dict[str, object],
+) -> dict[str, object]:
+    """Keep the result that proves the furthest successful perception stage."""
+    current_rank = REJECTION_INFORMATION_RANK.get(str(current.get("reason")), 0)
+    candidate_rank = REJECTION_INFORMATION_RANK.get(str(candidate.get("reason")), 0)
+    return candidate if candidate_rank >= current_rank else current
+
+
 def _reason_for_frame(
     gesture_frame: GestureFrame,
     pointing_present: bool,
@@ -90,10 +111,8 @@ def _reason_for_frame(
         return "fingertip_not_detected"
     if not pointing_present:
         return "pointing_finger_not_detected"
-    if object_count == 0:
-        return "object_not_in_detection_list"
-    if inside_count == 0:
-        return "fingertip_outside_object_boxes"
+    if object_count == 0 or inside_count == 0:
+        return "pointed_object_not_in_detection_list"
     if inside_count > 1:
         return "pointing_is_ambiguous"
     return "pointing_not_stable"
@@ -129,6 +148,7 @@ def run_session(
     ready_file: Path,
     timeout_seconds: float,
     hold_seconds: float,
+    selection_kind: str,
     display: bool,
 ) -> int:
     gesture = GestureDetector(
@@ -144,6 +164,9 @@ def run_session(
     timer = HoldTimer(hold_seconds)
     result = _base_result(session_id, "rejected", "no_usable_frame")
     selected: DetectedObject | None = None
+    selection_complete = False
+    confirmed_key: str | None = None
+    display_reason = str(result["reason"])
     camera = CameraStream(config.camera)
     frame_index = 0
 
@@ -161,7 +184,7 @@ def run_session(
         )
         started = time.monotonic()
 
-        while time.monotonic() - started < timeout_seconds:
+        while timeout_seconds <= 0.0 or time.monotonic() - started < timeout_seconds:
             if _stop_requested(request_file):
                 break
 
@@ -180,7 +203,7 @@ def run_session(
             center = bbox_center(fingertip.box) if fingertip is not None else None
 
             touch = None
-            if center is not None and pointing_present:
+            if selection_kind == "object" and center is not None and pointing_present:
                 touch = find_touched_object(
                     objects,
                     center,
@@ -190,33 +213,71 @@ def run_session(
 
             inside_count = touch.inside_count if touch is not None else 0
             candidate = touch.touched if touch is not None and inside_count == 1 else None
-            hold = timer.update(candidate.object_id if candidate is not None else None, time.monotonic())
-            if hold.just_confirmed and candidate is not None:
+            candidate_key = candidate.object_id if candidate is not None else None
+            if selection_kind == "location" and center is not None and pointing_present:
+                candidate_key = place_grid_key(center)
+            hold = timer.update(candidate_key, time.monotonic())
+            if hold.just_confirmed and candidate_key is not None:
                 selected = candidate
+                selection_complete = True
+                confirmed_key = candidate_key
                 result = {
                     **_base_result(session_id, "selected", "selected"),
                     "safe_to_use": True,
+                    "selection_kind": selection_kind,
                     "selected_at_unix_s": time.time(),
+                    "last_seen_at_unix_s": time.time(),
                     "frame_index": frame_index,
                     "frame_width": int(frame.shape[1]),
                     "frame_height": int(frame.shape[0]),
                     "fingertip_pixel": [center[0], center[1]],
                     "fingertip_confidence": fingertip.confidence,
                     "pointing_finger_present": True,
-                    "objects_considered": touch.considered,
-                    "selected_object": _object_payload(candidate),
+                    "objects_considered": touch.considered if touch is not None else 0,
+                    "selected_object": (
+                        _object_payload(candidate) if candidate is not None else None
+                    ),
                     "hold_seconds": hold.held_s,
                     "latency_ms": round((time.perf_counter() - frame_started) * 1000.0, 3),
                 }
-            elif selected is None:
-                reason = _reason_for_frame(
-                    gesture_frame,
-                    pointing_present,
-                    fingertip is not None,
-                    len(objects),
-                    inside_count,
+                display_reason = "selected"
+                _write_json(result_file, result)
+            elif (
+                selection_complete
+                and candidate_key is not None
+                and candidate_key == confirmed_key
+            ):
+                result["hold_seconds"] = hold.held_s
+                result["fingertip_pixel"] = [center[0], center[1]] if center else None
+                result["last_seen_at_unix_s"] = time.time()
+                result["frame_index"] = frame_index
+                result["latency_ms"] = round(
+                    (time.perf_counter() - frame_started) * 1000.0,
+                    3,
                 )
-                result = {
+                _write_json(result_file, result)
+            elif not selection_complete:
+                if selection_kind == "location":
+                    reason = (
+                        "pointing_not_stable"
+                        if center is not None and pointing_present
+                        else _reason_for_frame(
+                            gesture_frame,
+                            pointing_present,
+                            fingertip is not None,
+                            1,
+                            1,
+                        )
+                    )
+                else:
+                    reason = _reason_for_frame(
+                        gesture_frame,
+                        pointing_present,
+                        fingertip is not None,
+                        len(objects),
+                        inside_count,
+                    )
+                frame_rejection = {
                     **_base_result(session_id, "rejected", reason),
                     "frame_index": frame_index,
                     "frame_width": int(frame.shape[1]),
@@ -227,6 +288,8 @@ def run_session(
                     "objects_considered": len(objects),
                     "latency_ms": round((time.perf_counter() - frame_started) * 1000.0, 3),
                 }
+                result = _prefer_informative_rejection(result, frame_rejection)
+                display_reason = reason
 
             if display:
                 key = _render(
@@ -235,7 +298,7 @@ def run_session(
                     objects,
                     center,
                     selected.object_id if selected is not None else None,
-                    str(result["reason"]),
+                    display_reason,
                 )
                 if key == ord("q"):
                     result = _base_result(session_id, "rejected", "operator_cancelled")
@@ -243,7 +306,11 @@ def run_session(
 
             frame_index += 1
 
-        if result["status"] != "selected" and time.monotonic() - started >= timeout_seconds:
+        if (
+            result["status"] != "selected"
+            and timeout_seconds > 0.0
+            and time.monotonic() - started >= timeout_seconds
+        ):
             result["reason"] = "selection_timed_out"
         _write_json(result_file, result)
         return 0 if result["status"] in {"selected", "rejected"} else 2
@@ -275,8 +342,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--request-file", required=True, type=Path)
     parser.add_argument("--ready-file", required=True, type=Path)
     parser.add_argument("--config", type=Path, default=None)
-    parser.add_argument("--timeout-seconds", type=float, default=12.0)
+    parser.add_argument("--timeout-seconds", type=float, default=0.0)
     parser.add_argument("--hold-seconds", type=float, default=3.0)
+    parser.add_argument(
+        "--selection-kind",
+        choices=("object", "location"),
+        default="object",
+    )
     parser.add_argument("--display", dest="display", action="store_true", default=True)
     parser.add_argument("--no-display", dest="display", action="store_false")
     return parser.parse_args(argv)
@@ -296,6 +368,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ready_file=arguments.ready_file,
         timeout_seconds=arguments.timeout_seconds,
         hold_seconds=arguments.hold_seconds,
+        selection_kind=arguments.selection_kind,
         display=arguments.display,
     )
 

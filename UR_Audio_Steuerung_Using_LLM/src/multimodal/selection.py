@@ -22,6 +22,41 @@ POINTING_PATTERNS = (
     r"\bheb\s+(?:dies|das|es)\s+auf\b",
 )
 
+AFFIRMATIVE_PATTERNS = (
+    r"\byes\b",
+    r"\byeah\b",
+    r"\byep\b",
+    r"\bcorrect\b",
+    r"\bconfirm\b",
+    r"\bja\b",
+    r"\bgenau\b",
+    r"\bbestätig",
+)
+
+NEGATIVE_PATTERNS = (
+    r"\bno\b",
+    r"\bnope\b",
+    r"\bcancel\b",
+    r"\bstop\b",
+    r"\bnein\b",
+    r"\babbrechen\b",
+)
+
+DROP_HERE_PATTERNS = (
+    r"\bdrop\s+(?:it\s+)?here\b",
+    r"\bplace\s+(?:it\s+)?here\b",
+    r"\bput\s+(?:it\s+)?here\b",
+    r"\bhier\s+ab(?:legen|stellen)\b",
+    r"\bleg\s+(?:es\s+)?hier\b",
+    r"\bstell\s+(?:es\s+)?hier\b",
+)
+
+ZONE_PATTERNS = {
+    "Zone_1": r"\bzone\s*(?:one|1|eins)\b",
+    "Zone_2": r"\bzone\s*(?:two|2|zwei)\b",
+    "Zone_3": r"\bzone\s*(?:three|3|drei)\b",
+}
+
 
 @dataclass(frozen=True)
 class MultimodalResolution:
@@ -37,6 +72,29 @@ def is_pointing_reference(text: str, extracted_info: dict[str, object]) -> bool:
         return True
     normalized = " ".join(text.lower().split())
     return any(re.search(pattern, normalized) for pattern in POINTING_PATTERNS)
+
+
+def is_affirmative(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return any(re.search(pattern, normalized) for pattern in AFFIRMATIVE_PATTERNS)
+
+
+def is_negative(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return any(re.search(pattern, normalized) for pattern in NEGATIVE_PATTERNS)
+
+
+def is_drop_here(text: str) -> bool:
+    normalized = " ".join(text.lower().split())
+    return any(re.search(pattern, normalized) for pattern in DROP_HERE_PATTERNS)
+
+
+def extract_zone(text: str) -> str | None:
+    normalized = " ".join(text.lower().split())
+    for zone_name, pattern in ZONE_PATTERNS.items():
+        if re.search(pattern, normalized):
+            return zone_name
+    return None
 
 
 def _frame_size_from_detection(detection_data: dict[str, object]) -> tuple[int, int] | None:

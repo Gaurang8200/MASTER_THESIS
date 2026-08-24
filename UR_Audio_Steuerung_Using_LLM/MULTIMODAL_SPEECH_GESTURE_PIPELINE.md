@@ -2,7 +2,7 @@
 
 ## Goal
 
-The operator speaks a robot action while pointing at an object. The system selects the object only when the centre of the detected fingertip box is inside exactly one detected object box. Speech supplies the action and target zone. Gesture supplies the object identity.
+The operator can speak a robot action, point at an object, or use both at the same time. A pointing selection is accepted only when the centre of the detected fingertip box is inside exactly one detected object box. Speech can supply the action, object name, and target zone. Gesture can supply the object identity or a destination point.
 
 ## Complete pipeline
 
@@ -10,34 +10,69 @@ The operator speaks a robot action while pointing at an object. The system selec
 flowchart TD
     A["Capture and Detect Objects"] --> B["Overview detected_objects.json"]
     B --> C["Start Recording"]
-    C --> D["Microphone records speech"]
-    C --> E["Gesture subprocess starts in parallel"]
-    E --> F["Camera provides one shared live frame"]
+    C --> D["Microphone starts"]
+    C --> E["Gesture subprocess starts at the same time"]
+    E --> F["Camera stays active until the interaction finishes"]
     F --> G["Gesture model detects pointing finger and fingertip box"]
-    F --> H["YOLOv5 detects object boxes"]
+    F --> H["YOLOv5 detects object boxes on the same frame"]
     G --> I["Calculate fingertip box centre"]
-    H --> J["Keep objects above confidence threshold"]
+    H --> J["Keep confident object boxes"]
     I --> K{"Centre inside exactly one object box"}
     J --> K
-    K -->|"No"| L["Reject selection"]
-    L --> M["Print message in terminal"]
-    L --> N["Speak message to operator"]
-    L --> O["Robot execution remains blocked"]
-    K -->|"Yes"| P["Hold the same object for three seconds"]
-    P --> Q["Write session correlated JSON result"]
-    D --> R["Whisper converts audio to text"]
-    R --> S["OpenAI extracts action target and selection mode"]
-    Q --> T["Match live object to overview object"]
-    B --> T
-    S --> U{"Speech references a pointed object"}
-    U -->|"No"| V["Use existing named object speech path"]
-    U -->|"Yes"| T
-    T --> W{"Unique class and geometry match"}
-    W -->|"No"| L
-    W -->|"Yes"| X["Write selection_data.json"]
-    V --> X
-    X --> Y["Build existing precision robot workflow"]
-    Y --> Z["Enable Execute Robot Workflow"]
+    K -->|"No"| F
+    K -->|"Yes"| L["Hold the same object"]
+    L --> M["After five seconds write a safe live selection JSON"]
+    M --> N{"How the interaction finishes"}
+    D --> N
+    N -->|"User stops recording"| O["Stop microphone and camera"]
+    N -->|"Same object held ten seconds"| O
+    O --> P{"Speech was captured"}
+    P -->|"Yes"| Q["Whisper converts audio to text"]
+    Q --> R["OpenAI extracts action target object and selection mode"]
+    P -->|"No"| S0{"Point held for ten seconds"}
+    S0 -->|"No"| BLOCK
+    S0 -->|"Yes"| S["Create a gesture only pick request"]
+    R --> T{"Object selection source"}
+    S --> U["Use the pointed live object"]
+    T -->|"Named object in speech"| V["Use the named overview object"]
+    T -->|"This object or pointing reference"| U
+    U --> W["Require fresh live result and unique class geometry match"]
+    B --> W
+    W --> X{"Safe unique match"}
+    X -->|"No"| REJECT["Print and speak rejection"]
+    REJECT --> BLOCK["Robot execution remains blocked"]
+    X -->|"Yes"| Y["Write selection_data.json"]
+    V --> V0{"Named object and index available"}
+    V0 -->|"No"| REJECT
+    V0 -->|"Yes"| Y
+    Y --> Z{"Target zone already spoken"}
+    Z -->|"Yes"| AA["Speak complete pick and place proposal"]
+    Z -->|"No"| AB["Speak pick proposal"]
+    AA --> AC{"Spoken yes received"}
+    AB --> AC
+    AC -->|"No or silence"| BLOCK
+    AC -->|"Yes"| AD["Enable Execute Robot Workflow"]
+    AD --> AE["Run verification object detection again"]
+    AE --> AF{"At least one object detected"}
+    AF -->|"No"| BLOCK
+    AF -->|"Yes and target known"| AG["Run complete precision pick intermediate place release workflow"]
+    AF -->|"Yes and target missing"| AH["Run precision pick workflow and wait at intermediate position"]
+    AH --> AI["Start destination microphone and camera in parallel"]
+    AI --> AJ{"Destination input"}
+    AJ -->|"Zone spoken"| AK["Use named zone and ignore fingertip"]
+    AJ -->|"Drop here and fresh three second point"| AL["Use fingertip u and v"]
+    AJ -->|"Point held ten seconds without speech"| AL
+    AJ -->|"Nothing for two minutes"| AM["Speak destination reminder"]
+    AM --> AI
+    AL --> AN["Selected robot calibration converts u and v to x and y"]
+    AN --> AO["Use object class placement height for z"]
+    AK --> AP["Speak destination confirmation"]
+    AO --> AP
+    AP --> AQ{"Spoken yes received"}
+    AQ -->|"No or silence"| AI
+    AQ -->|"Yes"| AR["Move to destination release return and clean runtime files"]
+    AG --> END["Workflow complete"]
+    AR --> END
 ```
 
 ## Runtime sequence
@@ -53,28 +88,71 @@ sequenceDiagram
     participant Robot as Existing robot workflow
 
     User->>Audio: Press Start Recording
-    Audio->>Gesture: Start process with unique session id
-    Gesture->>Gesture: Load both models and open camera
-    Gesture-->>Audio: Ready handshake
-    Audio->>Audio: Start microphone recording
-    Gesture->>Camera: Open camera
-    loop During the same speech session
+    par Camera path
+        Audio->>Gesture: Start process with unique session id
+        Gesture->>Gesture: Load both models and open camera
+        Gesture->>Camera: Open camera
+        Gesture-->>Audio: Ready handshake
+    and Audio path
+        Audio->>Audio: Start microphone recording
+    end
+    loop During the same interaction
         Camera-->>Gesture: One live frame
         Gesture->>Gesture: Detect hand and objects on that frame
         Gesture->>Gesture: Test fingertip centre inside object box
+        alt One unique object remains selected
+            Gesture->>Gesture: Update continuous hold time
+        else No unique object
+            Gesture->>Gesture: Keep searching
+        end
     end
-    User->>Audio: Press Stop Recording
+    alt User stops recording
+        User->>Audio: Press Stop Recording
+    else Pointing remains stable for ten seconds
+        Gesture-->>Audio: Automatic completion request
+    end
     Audio->>Gesture: Write stop request for the same session id
     Gesture-->>Audio: Return selected or rejected JSON
-    Audio->>Whisper: Transcribe live_audio.wav
-    Whisper-->>Audio: Spoken text
-    Audio->>OpenAI: Extract action target and selection mode
-    OpenAI-->>Audio: Structured intent
+    opt Speech exists
+        Audio->>Whisper: Transcribe live_audio.wav
+        Whisper-->>Audio: Spoken text
+        Audio->>OpenAI: Extract action target and selection mode
+        OpenAI-->>Audio: Structured intent
+    end
     Audio->>Audio: Resolve gesture object against overview detections
-    alt Safe unique selection
-        Audio->>Robot: Existing selection data and method list
+    alt Valid command and object selection
+        Audio-->>User: Speak the complete proposed action
+        User->>Audio: Say yes
+        User->>Audio: Press Execute Robot Workflow
+        Audio->>Audio: Run verification object detection
+        alt Target exists
+            Audio->>Robot: Run complete confirmed precision workflow
+        else Target is missing
+            Audio->>Robot: Pick and move to intermediate position
+        end
     else Missing outside stale or ambiguous selection
         Audio-->>User: Terminal and spoken rejection
+    end
+    opt No target was spoken
+        Robot->>Robot: Hold the object at intermediate position
+        Audio->>Gesture: Start destination pointing
+        Audio->>Audio: Start destination speech in parallel
+        loop Until a destination candidate exists
+            alt Zone command
+                Audio->>Audio: Use named zone and ignore pointing
+            else Drop here with a fresh point
+                Gesture-->>Audio: Stable fingertip u and v after five seconds
+                Audio->>Audio: Apply the selected robot calibration
+            else Pointing without speech
+                Gesture-->>Audio: Stable fingertip u and v after ten seconds
+                Audio->>Audio: Apply the selected robot calibration
+            else No input for two minutes
+                Audio-->>User: Ask for a destination
+            end
+        end
+        Audio-->>User: Ask for spoken confirmation
+        User->>Audio: Say yes
+        Audio->>Robot: Place and release
     end
 ```
 
@@ -88,10 +166,12 @@ flowchart TD
     C --> E["Confidence filtered object boxes"]
     D --> F{"x1 less than or equal to x less than or equal to x2 and y1 less than or equal to y less than or equal to y2"}
     E --> F
-    F -->|"Zero boxes"| G["Object not detected"]
-    F -->|"More than one box"| H["Ambiguous pointing"]
+    F -->|"Zero boxes"| G["Keep searching"]
+    F -->|"More than one box"| H["Keep searching because pointing is ambiguous"]
     F -->|"Exactly one box"| I["Stable hold timer"]
     I -->|"Three seconds"| J["Safe live selection"]
+    J -->|"Same object remains selected"| K["Continue updating hold time"]
+    K -->|"Ten seconds"| L["Automatically finish gesture only interaction"]
 ```
 
 The camera image is not mirrored. Mirroring would move the fingertip to the opposite side while the robot overview coordinates remain unchanged.
@@ -121,7 +201,9 @@ The live gesture process creates temporary tracking IDs. The robot uses the IDs 
   "status": "selected",
   "reason": "selected",
   "safe_to_use": true,
+  "selection_kind": "object",
   "selected_at_unix_s": 1787500000.0,
+  "last_seen_at_unix_s": 1787500003.2,
   "frame_index": 42,
   "frame_width": 1280,
   "frame_height": 720,
@@ -129,6 +211,7 @@ The live gesture process creates temporary tracking IDs. The robot uses the IDs 
   "fingertip_confidence": 0.91,
   "pointing_finger_present": true,
   "objects_considered": 2,
+  "hold_seconds": 3.2,
   "selected_object": {
     "live_object_id": "obj_003",
     "class_name": "Cylinder",
@@ -139,11 +222,11 @@ The live gesture process creates temporary tracking IDs. The robot uses the IDs 
 }
 ```
 
-`safe_to_use` must be true. The session ID must match the audio recording session. The schema version must be `1.0`. Any mismatch blocks execution.
+`safe_to_use` must be true. The session ID must match the audio recording session. The schema version must be `1.0`. The last observation must still be fresh when the result is used. Any mismatch blocks execution.
 
 ## File responsibilities
 
-`Code/gesture_selection_system/pipeline/run/speech_selection_service.py` owns the live camera session and returns one safe selection result.
+`Code/gesture_selection_system/pipeline/run/speech_selection_service.py` owns the live camera session and returns a safe object selection or destination point result.
 
 `Code/gesture_selection_system/pipeline/detection/gesture_detector.py` loads the trained hand gesture model and returns the pointing finger and fingertip boxes.
 
@@ -163,10 +246,14 @@ The live gesture process creates temporary tracking IDs. The robot uses the IDs 
 
 `Pick up this object and move it to Zone 2` uses gesture for the object and speech for the action and target.
 
-`Pick up` uses gesture for the object. The existing command logic still asks for a target zone before it builds a pick and place workflow.
+`Pick up` uses gesture for the object. After confirmation the robot picks the object and waits at the intermediate position for a destination.
 
 `Pick up the second cylinder and move it to Zone 2` keeps the existing speech only object selection path.
 
+`Drop at Zone 2` uses the taught Zone 2 coordinates and ignores pointing.
+
+`Drop here` uses the current fingertip pixel. Universal Robot applies its existing calibration matrix. Franka applies its original Franka calibration matrix. Both use the selected object class to set the existing placement height.
+
 ## Safety result
 
-No robot method list is accepted when pointing is outside every box, gesture confidence is too low, object confidence is too low, more than one live box contains the fingertip, the live object is absent from the overview list, the overview match is ambiguous, the subprocess result is missing, or the session contract is invalid.
+No robot method list is accepted when the gesture result is missing or stale, pointing does not identify one object, confidence is too low, the live object is absent from the overview list, the overview match is ambiguous, spoken yes is missing, verification detection fails, or the session contract is invalid.

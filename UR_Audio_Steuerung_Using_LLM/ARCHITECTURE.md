@@ -2,15 +2,17 @@
 
 ## Purpose
 
-This project lets an operator detect several objects, select one with a spoken command, and move it to a named robot zone.
+This project lets an operator detect several objects, select one through speech or pointing, and move it with either Universal Robot or Franka.
 
-The application combines five technical areas.
+The application combines seven technical areas.
 
 1. A Tkinter desktop interface
 2. YOLOv5 object detection
 3. Local Whisper speech recognition
 4. OpenAI command interpretation
-5. Universal Robots motion and vacuum control
+5. Pointing finger and fingertip detection
+6. Universal Robot motion and vacuum control
+7. Franka motion and gripper control
 
 ## Complete system graph
 
@@ -18,8 +20,8 @@ The application combines five technical areas.
 flowchart TD
     Operator["Operator"]
     GUI["application_multi_object.py<br/>Tkinter interface and workflow state"]
-    Camera["Camera or simulation image"]
-    Detection["detection_multi.py<br/>YOLOv5 multi object detection"]
+    OverviewCamera["Overview camera or simulation image"]
+    Detection["detection_multi.py<br/>YOLOv5 overview detection"]
     DetectionData["detected_objects.json<br/>classes, boxes, centers, confidence"]
     Microphone["Microphone"]
     Audio["data/audio/live_audio.wav"]
@@ -27,15 +29,25 @@ flowchart TD
     Transcript["Transcribed German or English command"]
     OpenAI["InformationExtractionOpenAIMulti<br/>OpenAI command interpretation"]
     Command["Structured command JSON<br/>object, index, target zone, action"]
+    GestureCamera["Live gesture camera"]
+    GestureModel["Pointing finger and fingertip model"]
+    LiveObjects["YOLOv5 live object boxes"]
+    GestureResult["Fresh gesture session JSON"]
+    Resolver["Speech and gesture object resolver"]
+    Confirmation["Spoken yes confirmation"]
     Selector["robot_method_selector_multi.py<br/>object and workflow selection"]
     Methods["Ordered robot method list"]
-    RobotControl["robot_control.py<br/>simulation or real execution"]
+    Verification["Verification object detection"]
+    RobotChoice{"Selected robot"}
+    URControl["robot_control.py<br/>Universal Robot execution"]
+    FrankaControl["src/franka/workflow.py<br/>Franka execution"]
     LegacyVision["Code-YOLOv5-Windows_llm<br/>precision detection and calibration"]
-    Robot["Universal Robots controller<br/>URScript and vacuum tool"]
+    URRobot["Universal Robot<br/>URScript and vacuum tool"]
+    FrankaRobot["Franka<br/>franky and gripper"]
 
     Operator --> GUI
-    GUI --> Camera
-    Camera --> Detection
+    GUI --> OverviewCamera
+    OverviewCamera --> Detection
     Detection --> DetectionData
     DetectionData --> GUI
     Operator --> Microphone
@@ -45,13 +57,30 @@ flowchart TD
     Transcript --> OpenAI
     DetectionData --> OpenAI
     OpenAI --> Command
+    GUI --> GestureCamera
+    GestureCamera --> GestureModel
+    GestureCamera --> LiveObjects
+    GestureModel --> GestureResult
+    LiveObjects --> GestureResult
+    GestureResult --> Resolver
+    DetectionData --> Resolver
+    Command --> Resolver
+    Resolver --> Selector
     Command --> Selector
     DetectionData --> Selector
     Selector --> Methods
-    Methods --> RobotControl
-    RobotControl --> LegacyVision
-    LegacyVision --> RobotControl
-    RobotControl --> Robot
+    Methods --> Confirmation
+    Operator --> Confirmation
+    Confirmation --> Verification
+    Verification --> RobotChoice
+    RobotChoice -->|"Universal Robot"| URControl
+    RobotChoice -->|"Franka"| FrankaControl
+    URControl --> LegacyVision
+    FrankaControl --> LegacyVision
+    LegacyVision --> URControl
+    LegacyVision --> FrankaControl
+    URControl --> URRobot
+    FrankaControl --> FrankaRobot
 ```
 
 ## Operator workflow
@@ -62,12 +91,21 @@ stateDiagram-v2
     ReadyForDetection --> ProcessingDetection: Capture objects
     ProcessingDetection --> ReadyForCommands: Objects found
     ProcessingDetection --> ReadyForDetection: No valid objects
-    ReadyForCommands --> Recording: Start microphone
-    Recording --> ProcessingCommand: Stop microphone
+    ReadyForCommands --> RecordingAndPointing: Start interaction
+    RecordingAndPointing --> ProcessingCommand: Stop recording or stable ten second point
     ProcessingCommand --> ReadyForCommands: Clarification required
-    ProcessingCommand --> ReadyForExecution: Valid command and workflow
+    ProcessingCommand --> AwaitingConfirmation: Valid object and command
+    AwaitingConfirmation --> ReadyForCommands: No or silence
+    AwaitingConfirmation --> ReadyForExecution: Spoken yes
     ReadyForExecution --> Simulating: Execute in simulation mode
     ReadyForExecution --> ExecutingRobot: Execute in real mode
+    Simulating --> AwaitingDestination: Pick complete without target
+    ExecutingRobot --> AwaitingDestination: Pick complete without target
+    AwaitingDestination --> DestinationConfirmation: Zone or point selected
+    AwaitingDestination --> AwaitingDestination: Reminder after two minutes
+    DestinationConfirmation --> AwaitingDestination: No or silence
+    DestinationConfirmation --> Simulating: Spoken yes in simulation
+    DestinationConfirmation --> ExecutingRobot: Spoken yes in real mode
     Simulating --> ReadyForCommands: Simulation complete
     ExecutingRobot --> ReadyForCommands: Robot workflow complete
     ExecutingRobot --> ReadyForExecution: Robot execution error
@@ -82,24 +120,40 @@ sequenceDiagram
     actor User as Operator
     participant GUI as application_multi_object.py
     participant Mic as SpeechRecognition
+    participant Gesture as Gesture subprocess
     participant Whisper as SpeechToTextLocal
     participant LLM as InformationExtractionOpenAIMulti
     participant Files as detected_objects.json
     participant Selector as robot_method_selector_multi.py
 
     User->>GUI: Start recording
-    GUI->>Mic: Listen in background for up to five seconds
-    Mic-->>GUI: Captured audio
-    GUI->>GUI: Save live_audio.wav
-    GUI->>Whisper: Transcribe audio file
-    Whisper-->>GUI: Command text
-    GUI->>LLM: Extract structured command
-    LLM->>Files: Load currently available objects
-    Files-->>LLM: Object classes and counts
-    LLM-->>GUI: Intent, object, object index, action, target zone
-    GUI->>Selector: Select precision workflow
+    par Speech path
+        GUI->>Mic: Start background recording
+        Mic-->>GUI: Captured audio phrases
+    and Gesture path
+        GUI->>Gesture: Start camera and both live models
+        Gesture-->>GUI: Fresh pointed object result after five seconds
+    end
+    alt User stops recording
+        User->>GUI: Stop recording
+    else Gesture remains stable for ten seconds
+        Gesture-->>GUI: Finish automatically
+    end
+    opt Speech was captured
+        GUI->>GUI: Save live_audio.wav
+        GUI->>Whisper: Transcribe audio file
+        Whisper-->>GUI: Command text
+        GUI->>LLM: Extract structured command
+        LLM->>Files: Load currently available objects
+        Files-->>LLM: Object classes and counts
+        LLM-->>GUI: Intent object index action and target zone
+    end
+    GUI->>GUI: Match gesture result with overview objects when pointing was used
+    GUI->>Selector: Select complete or pick only precision workflow
     Selector->>Files: Find the requested object instance
     Selector-->>GUI: Ordered robot method names
+    GUI-->>User: Speak proposed movement
+    User->>GUI: Say yes
 ```
 
 ### Concrete command example
@@ -119,6 +173,7 @@ Whisper produces text. The OpenAI extractor is expected to return data shaped li
   "action": "greife Marker, bewege zu Zone_2 und lasse los",
   "object": "Marker",
   "object_index": 1,
+  "selection_mode": "speech",
   "needs_clarification": false,
   "clarification_fields": [],
   "command_type": "new",
@@ -185,7 +240,13 @@ flowchart TD
     VacuumOn["suction_on"]
     Lift["pick_up_object"]
     IntermediateA["intermediate_position"]
+    TargetKnown{"Target already known"}
+    WaitDestination["Parallel destination speech and pointing"]
     Zone["move_to_target Zone"]
+    ChosenZone["move_to_target selected Zone"]
+    Point["Calibrate fingertip u and v to robot x and y"]
+    DynamicTarget["move_to_point x and y"]
+    ConfirmDestination{"Spoken yes"}
     Place["final_position"]
     VacuumOff["suction_off"]
     IntermediateB["intermediate_position"]
@@ -204,8 +265,17 @@ flowchart TD
     Pick --> VacuumOn
     VacuumOn --> Lift
     Lift --> IntermediateA
-    IntermediateA --> Zone
+    IntermediateA --> TargetKnown
+    TargetKnown -->|"Yes"| Zone
+    TargetKnown -->|"No"| WaitDestination
+    WaitDestination -->|"Named zone"| ChosenZone
+    WaitDestination -->|"Drop here or ten second point"| Point
+    Point --> DynamicTarget
     Zone --> Place
+    ChosenZone --> ConfirmDestination
+    DynamicTarget --> ConfirmDestination
+    ConfirmDestination -->|"Yes"| Place
+    ConfirmDestination -->|"No or silence"| WaitDestination
     Place --> VacuumOff
     VacuumOff --> IntermediateB
     IntermediateB --> Return
@@ -341,11 +411,27 @@ This sends the transcript and detected object context to the OpenAI API. It retu
 
 ### `src/robot_method_selector_multi.py`
 
-This selects the requested object instance and creates the ordered precision workflow. Dangerous intents and unknown zones produce an empty method list.
+This selects the requested object instance and creates the ordered precision workflow. A known target creates the complete pick and place list. A missing target creates the pick phase that stops at the intermediate position.
+
+### `src/multimodal/gesture_client.py`
+
+This owns the gesture subprocess lifecycle and reads fresh object or destination results for the active session.
+
+### `src/multimodal/selection.py`
+
+This recognizes pointing language, matches a live pointed object to the overview detection, and recognizes yes, no, zone, and drop here speech.
+
+### `src/multimodal/feedback.py`
+
+This prints interaction messages and speaks them through the operating system speech command.
 
 ### `src/robot_control.py`
 
 This is the robot execution layer. It contains simulation behavior, URScript generation, socket communication, robot feedback reads, vacuum control, movement functions, precision detection calls, coordinate conversion, object orientation, method dispatch, and complete workflow execution.
+
+### `src/franka/workflow.py`
+
+This maps the same ordered robot methods to Franka motions. It keeps one Franka connection open while the object is held at the intermediate position and uses the original Franka calibration for a pointed destination.
 
 ### `src/zone_coordinates.py`
 
@@ -365,9 +451,13 @@ Its most important integration scripts are:
 6. `function_pool.py` contains camera and robot calibration mathematics
 7. `yolov5/detect_multi_objects.py` performs the modified YOLOv5 inference
 
-### `requirements.txt`
+### `requirements-mac.txt`
 
-This declares Whisper, SpeechRecognition, PyAudio, OpenAI, and dotenv dependencies for the top level application.
+This declares the complete macOS environment.
+
+### `requirements-linux-x86_64.txt`
+
+This declares the complete Ubuntu x86_64 environment.
 
 ### `.env`
 
@@ -375,7 +465,7 @@ This supplies the `OPENAI_API_KEY`. The extractor stops during import when this 
 
 ### `ip_roboter.txt`
 
-This records the intended Universal Robots address. The interface currently also provides the same address as its default editable value.
+This is a legacy Universal Robot address file. The current interface uses `192.168.2.180` for Universal Robot and `172.16.0.2` for Franka by default.
 
 ### `run_guide.txt`
 

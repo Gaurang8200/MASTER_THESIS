@@ -112,7 +112,15 @@ class SelectionConfig(BaseModel):
 class WorkspaceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    normalized_polygon: list[tuple[float, float]] = Field(min_length=3)
+    normalized_polygon: list[tuple[float, float]] = Field(
+        default_factory=lambda: [
+            (0.08, 0.30),
+            (0.92, 0.30),
+            (0.92, 0.96),
+            (0.08, 0.96),
+        ],
+        min_length=3,
+    )
 
     @field_validator("normalized_polygon")
     @classmethod
@@ -244,7 +252,7 @@ class GestureConfig(BaseModel):
     confidence: ConfidenceConfig = Field(default_factory=ConfidenceConfig)
     stability: StabilityConfig = Field(default_factory=StabilityConfig)
     selection: SelectionConfig = Field(default_factory=SelectionConfig)
-    workspace: WorkspaceConfig
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     place_calibration: PlaceCalibrationConfig = Field(default_factory=PlaceCalibrationConfig)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)

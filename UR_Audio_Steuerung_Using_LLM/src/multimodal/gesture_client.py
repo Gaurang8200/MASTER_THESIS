@@ -52,8 +52,16 @@ class GestureProcessClient:
     def session(self) -> GestureSession | None:
         return self._session
 
-    def start(self) -> GestureSession:
+    def start(
+        self,
+        selection_kind: str = "object",
+        hold_seconds: float = 3.0,
+    ) -> GestureSession:
         self.cancel()
+        if selection_kind not in {"object", "location"}:
+            raise ValueError(f"unsupported gesture selection kind {selection_kind}")
+        if hold_seconds <= 0.0:
+            raise ValueError("gesture hold time must be positive")
         if not self._service.is_file():
             raise FileNotFoundError(f"gesture service not found at {self._service}")
 
@@ -79,6 +87,10 @@ class GestureProcessClient:
             str(session.request_file),
             "--ready-file",
             str(session.ready_file),
+            "--selection-kind",
+            selection_kind,
+            "--hold-seconds",
+            str(hold_seconds),
         ]
         if not self._display:
             command.append("--no-display")
@@ -93,6 +105,15 @@ class GestureProcessClient:
         self._wait_until_ready(session, self._process)
         print(f"MULTIMODAL: Gesture session started {session.session_id}")
         return session
+
+    def latest_result(self) -> dict[str, object] | None:
+        session = self._session
+        if session is None or not session.result_file.is_file():
+            return None
+        payload = self._read_result(session)
+        if payload.get("status") != "selected" or not payload.get("safe_to_use"):
+            return None
+        return payload
 
     def finish(self, wait_seconds: float = 8.0) -> dict[str, object]:
         session = self._session

@@ -32,6 +32,10 @@ from src.zone_coordinates import get_zone_coordinates
 from src.multimodal import (
    GestureProcessClient,
    OperatorFeedback,
+   extract_zone,
+   is_affirmative,
+   is_drop_here,
+   is_negative,
    resolve_multimodal_selection,
 )
 
@@ -94,6 +98,8 @@ detected_objects  = []            # List of detected objects
 selected_object   = None          # Currently selected object
 gesture_client    = GestureProcessClient(ROOT, display=True)
 gesture_start_error = None
+pending_command_info = None
+gesture_poll_job = None
 
 # === WORKFLOW STATUS MANAGEMENT ===
 class WorkflowStatus:
@@ -337,205 +343,425 @@ def callback(recognizer, audio):
    last_audio = audio
    print("Audio captured.")
 
-def toggle_recording():
-   global recording, stop_listening, last_audio, robot_methods, ie_instance
-   global selected_object, gesture_start_error
+def _operator_feedback():
+   return OperatorFeedback(
+       lambda message: (
+           output_text.insert(tk.END, message),
+           output_text.see(tk.END),
+           app.update_idletasks(),
+       )
+   )
 
-   if not recording:
-       if not detected_objects:
-           messagebox.showwarning("No Objects", "Please detect objects first using 'Capture & Detect Objects'")
-           return
+
+def _transcribe_audio(audio, filename):
+   audio_path = os.path.join("data", "audio", filename)
+   os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+   with open(audio_path, "wb") as audio_file:
+       audio_file.write(audio.get_wav_data())
+   return SpeechToTextLocal().transcribe(audio_path)
+
+
+def _listen_for_confirmation(prompt):
+   feedback = _operator_feedback()
+   idx = mic_mapping.get(mic_var.get())
+   if idx is None:
+       feedback.publish("A microphone is required for confirmation.")
+       return False
+   attempts = ((prompt, 10.0), ("Please answer yes or no.", 5.0))
+   for attempt_prompt, timeout_seconds in attempts:
+       feedback.publish(attempt_prompt, wait_for_speech=True)
+       recognizer = sr.Recognizer()
+       try:
+           with sr.Microphone(device_index=idx) as source:
+               audio = recognizer.listen(
+                   source,
+                   timeout=timeout_seconds,
+                   phrase_time_limit=3.0,
+               )
+           answer = _transcribe_audio(audio, "confirmation.wav")
+           print(f"MULTIMODAL CONFIRMATION: {answer}")
+       except sr.WaitTimeoutError:
+           continue
+       except Exception as error:
+           feedback.publish(f"Confirmation could not be captured. {error}")
+           return False
+       if is_affirmative(answer):
+           feedback.publish("Command confirmed.")
+           return True
+       if is_negative(answer):
+           feedback.publish("Command cancelled.")
+           return False
+   feedback.publish("No explicit yes was received. The robot will not move.")
+   return False
+
+
+def _write_selection_data(info, gesture_result):
+   global selected_object
+   object_type = str(info.get("object", ""))
+   object_index = int(info.get("object_index", 0))
+   matching = [
+       item
+       for item in detected_objects
+       if item["class_name"].lower() == object_type.lower()
+   ]
+   if info.get("selection_mode") != "gesture":
+       if object_index < 0 or object_index >= len(matching):
+           raise ValueError("Selected object index is not available")
+       selected_object = matching[object_index]
+   if selected_object is None:
+       raise ValueError("No object was selected")
+   txt_dir = os.path.join(PRE, "txt_file")
+   os.makedirs(txt_dir, exist_ok=True)
+   selection_data = {
+       "selected_object_id": selected_object["id"],
+       "selected_object_class": selected_object["class_name"],
+       "selected_object_confidence": selected_object["confidence"],
+       "selection_timestamp": str(time.time()),
+       "original_center_x": selected_object["center"][0],
+       "original_center_y": selected_object["center"][1],
+       "original_bbox": selected_object["bbox"],
+       "original_confidence": selected_object["confidence"],
+       "selection_phase": "overview",
+       "selection_source": info.get("selection_mode", "speech"),
+       "gesture_session_id": info.get("gesture_session_id"),
+       "fingertip_pixel": gesture_result.get("fingertip_pixel"),
+   }
+   with open(os.path.join(txt_dir, "selection_data.json"), "w") as selection_file:
+       json.dump(selection_data, selection_file, indent=2)
+   update_object_display()
+
+
+def _confirmation_prompt(info):
+   name = selected_object["class_name"]
+   number = int(info.get("object_index", 0)) + 1
+   target = str(info.get("target_location") or "")
+   object_name = f"{name} {number}"
+   if target:
+       spoken_target = target.replace("_", " ")
+       return f"Do you want me to pick up {object_name} and place it in {spoken_target}?"
+   return f"Do you want me to pick up {object_name}?"
+
+
+def _gesture_result_is_fresh(gesture_result, maximum_age_seconds=1.5):
+   observed_at = gesture_result.get("last_seen_at_unix_s")
+   return isinstance(observed_at, (int, float)) and time.time() - observed_at <= maximum_age_seconds
+
+
+def _prepare_command(text, gesture_result):
+   global ie_instance, selected_object, pending_command_info
+   if ie_instance is None:
+       ie_instance = InformationExtractionOpenAIMulti()
+   gesture_only = not text.strip()
+   if gesture_only:
+       info = {
+           "intent": "nehmen",
+           "target_location": "",
+           "action": "pick",
+           "object": None,
+           "object_index": 0,
+           "selection_mode": "gesture",
+           "needs_clarification": False,
+           "clarification_fields": [],
+       }
+       resolution_text = "pick up this object"
+   else:
+       info = ie_instance.extract(text, command_type.get())
+       resolution_text = text
+   detection_data = load_overview_detection_data()
+   multimodal = resolve_multimodal_selection(
+       resolution_text,
+       info,
+       gesture_result,
+       detection_data,
+   )
+   if multimodal.required and not multimodal.accepted:
+       publish_multimodal_rejection(multimodal.reason)
+       return False
+   if multimodal.required and not _gesture_result_is_fresh(gesture_result):
+       publish_multimodal_rejection("fingertip_not_detected")
+       return False
+   if multimodal.required and multimodal.selected_object is not None:
+       selected_object = multimodal.selected_object
+       info["object"] = selected_object["class_name"]
+       info["object_index"] = multimodal.object_index
+       info["selection_mode"] = "gesture"
+       info["gesture_session_id"] = gesture_result.get("session_id")
+   clarification_fields = [
+       field
+       for field in (info.get("clarification_fields") or [])
+       if field not in {"object", "target_location"}
+   ]
+   info["clarification_fields"] = clarification_fields
+   info["needs_clarification"] = bool(clarification_fields)
+   if handle_clarification_needed(info):
+       return False
+   robot_methods[:] = select_robot_methods_multi(info, use_precision=True)
+   if not robot_methods:
+       return False
+   _write_selection_data(info, gesture_result)
+   output_text.insert(
+       tk.END,
+       "\nExtracted Information:\n"
+       + json.dumps(info, indent=2, ensure_ascii=False)
+       + "\n\nSelected Robot Methods:\n"
+       + "\n".join(robot_methods)
+       + "\n",
+   )
+   pending_command_info = info
+   if not _listen_for_confirmation(_confirmation_prompt(info)):
        robot_methods.clear()
+       pending_command_info = None
        selected_object = None
        update_object_display()
-       idx = mic_mapping.get(mic_var.get())
-       if idx is None:
-           messagebox.showerror(
-               "Microphone unavailable",
-               "No valid input microphone was found.",
-           )
-           return
+       return False
+   update_command_history_display()
+   save_command_history()
+   return True
 
-       recognizer = sr.Recognizer()
-       last_audio = None
-       gesture_start_error = None
-       try:
-           session = gesture_client.start()
-           print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
-       except Exception as error:
-           gesture_start_error = str(error)
-           print(f"MULTIMODAL: Gesture process could not start. {error}")
-       try:
-           mic = sr.Microphone(device_index=idx)
-           with mic as source:
-               recognizer.adjust_for_ambient_noise(source, duration=1)
-           stop_listening = recognizer.listen_in_background(
-               mic, callback, phrase_time_limit=5
-           )
-       except Exception as error:
-           gesture_client.cancel()
-           stop_listening = None
-           output_text.delete("1.0", tk.END)
-           output_text.insert(
-               tk.END,
-               f"MICROPHONE: Could not start the selected input. {error}\n",
-           )
-           update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
-           messagebox.showerror(
-               "Microphone error",
-               "The selected microphone could not be opened. Check the microphone selection and macOS permission.",
-           )
-           return
 
-       recording = True
-       btn_record.config(text="Stop Recording")
-       update_workflow_status(WorkflowStatus.PROCESSING)
-       output_text.delete("1.0", tk.END)
-       output_text.insert(tk.END, "MICROPHONE: Recording...\n")
-   else:
-       if stop_listening:
-           stop_listening(wait_for_stop=False)
-       recording = False
-       btn_record.config(text="Start Recording")
-       if not last_audio:
-           gesture_client.cancel()
-           output_text.insert(tk.END, "No audio captured.\n")
-           update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
-           return
-       temp_file = os.path.join("data", "audio", "live_audio.wav")
-       os.makedirs(os.path.dirname(temp_file), exist_ok=True)
-       with open(temp_file, "wb") as f:
-           f.write(last_audio.get_wav_data())
-       output_text.insert(tk.END, f"Audio saved to {temp_file}\n")
-       if gesture_start_error is None:
-           gesture_result = gesture_client.finish()
-       else:
-           gesture_result = {
-               "status": "error",
-               "reason": "gesture_process_not_started",
-               "safe_to_use": False,
-               "error": gesture_start_error,
-           }
-       print(
-           "MULTIMODAL: Gesture result "
-           + json.dumps(gesture_result, ensure_ascii=False)
-       )
+def _finish_recording():
+   global recording, stop_listening, last_audio, gesture_poll_job
+   if not recording:
+       return
+   recording = False
+   if gesture_poll_job is not None:
+       app.after_cancel(gesture_poll_job)
+       gesture_poll_job = None
+   if stop_listening:
+       stop_listening(wait_for_stop=False)
+       stop_listening = None
+   btn_record.config(text="Start Recording")
+   gesture_result = gesture_client.finish() if gesture_start_error is None else {
+       "status": "error",
+       "reason": "gesture_process_not_started",
+       "safe_to_use": False,
+   }
+   print("MULTIMODAL: Gesture result " + json.dumps(gesture_result, ensure_ascii=False))
+   text = ""
+   if last_audio is not None:
        try:
-           stt  = SpeechToTextLocal()
-           text = stt.transcribe(temp_file)
+           text = _transcribe_audio(last_audio, "live_audio.wav")
            output_text.insert(tk.END, "\nTranscribed Text:\n" + text + "\n")
-       except Exception as e:
-           output_text.insert(tk.END, f"Transcription error: {e}\n")
+       except Exception as error:
+           output_text.insert(tk.END, f"Transcription error: {error}\n")
            update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
            return
+   elif float(gesture_result.get("hold_seconds", 0.0)) < 10.0:
+       output_text.insert(tk.END, "No speech or stable gesture was captured.\n")
+       update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
+       return
+   try:
+       prepared = _prepare_command(text, gesture_result)
+   except Exception as error:
+       output_text.insert(tk.END, f"Command preparation error: {error}\n")
+       prepared = False
+   update_workflow_status(
+       WorkflowStatus.READY_FOR_EXECUTION
+       if prepared
+       else WorkflowStatus.READY_FOR_COMMANDS
+   )
+
+
+def _poll_gesture_session():
+   global gesture_poll_job
+   if not recording:
+       return
+   result = gesture_client.latest_result()
+   if result is not None and _gesture_result_is_fresh(result):
+       held_seconds = float(result.get("hold_seconds", 0.0))
+       if held_seconds >= 10.0:
+           _finish_recording()
+           return
+   gesture_poll_job = app.after(200, _poll_gesture_session)
+
+
+def toggle_recording():
+   global recording, stop_listening, last_audio, gesture_start_error
+   global selected_object, pending_command_info, gesture_poll_job
+   if recording:
+       _finish_recording()
+       return
+   if not detected_objects:
+       messagebox.showwarning("No Objects", "Please detect objects first")
+       return
+   idx = mic_mapping.get(mic_var.get())
+   if idx is None:
+       messagebox.showerror("Microphone unavailable", "No valid input microphone was found")
+       return
+   robot_methods.clear()
+   selected_object = None
+   pending_command_info = None
+   last_audio = None
+   gesture_start_error = None
+   update_object_display()
+   gesture_outcome = {}
+
+   def start_gesture_capture():
        try:
-           if ie_instance is None:
-               ie_instance = InformationExtractionOpenAIMulti()
-           info = ie_instance.extract(text, command_type.get())
-           detection_data = load_overview_detection_data()
-           multimodal = resolve_multimodal_selection(
-               text,
-               info,
-               gesture_result,
-               detection_data,
-           )
-           if multimodal.required and not multimodal.accepted:
-               robot_methods.clear()
-               selected_object = None
-               publish_multimodal_rejection(multimodal.reason)
-               update_object_display()
-               update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
-               return
-           if multimodal.required and multimodal.selected_object is not None:
-               selected_object = multimodal.selected_object
-               info["object"] = selected_object["class_name"]
-               info["object_index"] = multimodal.object_index
-               info["selection_mode"] = "gesture"
-               info["gesture_session_id"] = gesture_result.get("session_id")
-               clarification_fields = [
-                   field
-                   for field in (info.get("clarification_fields") or [])
-                   if field != "object"
-               ]
-               info["clarification_fields"] = clarification_fields
-               info["needs_clarification"] = bool(clarification_fields)
-           if handle_clarification_needed(info):
-               update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
-               return
-           output_text.insert(
-               tk.END,
-               "\nExtracted Information:\n" +
-               json.dumps(info, indent=2, ensure_ascii=False) + "\n"
-           )
-           update_command_history_display()
-           save_command_history()
-       except Exception as e:
-           output_text.insert(tk.END, f"Extraction error: {e}\n")
-           update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
-           return
+           session = gesture_client.start(selection_kind="object", hold_seconds=5.0)
+           gesture_outcome["session"] = session
+       except Exception as error:
+           gesture_outcome["error"] = str(error)
+
+   gesture_thread = threading.Thread(target=start_gesture_capture, daemon=True)
+   gesture_thread.start()
+   try:
+       recognizer = sr.Recognizer()
+       microphone = sr.Microphone(device_index=idx)
+       with microphone as source:
+           recognizer.adjust_for_ambient_noise(source, duration=1)
+       stop_listening = recognizer.listen_in_background(
+           microphone,
+           callback,
+           phrase_time_limit=5,
+       )
+   except Exception as error:
+       gesture_thread.join(timeout=25.0)
+       gesture_client.cancel()
+       output_text.insert(tk.END, f"MICROPHONE: Could not start the selected input. {error}\n")
+       update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
+       return
+   gesture_thread.join(timeout=25.0)
+   if gesture_thread.is_alive():
+       gesture_start_error = "gesture process startup timed out"
+       gesture_client.cancel()
+   else:
+       gesture_start_error = gesture_outcome.get("error")
+   if gesture_start_error:
+       print(f"MULTIMODAL: Gesture process could not start. {gesture_start_error}")
+   else:
+       session = gesture_outcome["session"]
+       print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
+   recording = True
+   btn_record.config(text="Stop Recording")
+   update_workflow_status(WorkflowStatus.PROCESSING)
+   output_text.delete("1.0", tk.END)
+   output_text.insert(tk.END, "MULTIMODAL: Camera and microphone are active.\n")
+   gesture_poll_job = app.after(200, _poll_gesture_session)
+
+
+def _transform_destination_point(gesture_result):
+   fingertip = gesture_result.get("fingertip_pixel")
+   frame_width = int(gesture_result.get("frame_width") or 0)
+   frame_height = int(gesture_result.get("frame_height") or 0)
+   if not isinstance(fingertip, list) or len(fingertip) != 2:
+       raise ValueError("Destination fingertip pixel is missing")
+   if frame_width <= 0 or frame_height <= 0:
+       raise ValueError("Destination camera size is missing")
+   pixel_x, pixel_y = float(fingertip[0]), float(fingertip[1])
+   if robot_type.get() == "franka":
+       from src.franka import transform_franka_pixel_to_robot
+
+       point = transform_franka_pixel_to_robot(
+           pixel_x,
+           pixel_y,
+           frame_width,
+           frame_height,
+       )
+       print(
+           "FRANKA DESTINATION TRANSFORM: "
+           f"u={pixel_x:.1f}, v={pixel_y:.1f}, x={point.x:.5f}, y={point.y:.5f}"
+       )
+       return point.x, point.y
+   detection_data = load_overview_detection_data()
+   metadata = detection_data.get("metadata", {})
+   target_width = int(metadata.get("image_width") or frame_width)
+   target_height = int(metadata.get("image_height") or frame_height)
+   calibrated_u = pixel_x * target_width / frame_width
+   calibrated_v = pixel_y * target_height / frame_height
+   from src.robot_control import transform_ur_pixel_to_robot
+
+   x_robot, y_robot = transform_ur_pixel_to_robot(calibrated_u, calibrated_v)
+   print(
+       "UR DESTINATION TRANSFORM: "
+       f"u={calibrated_u:.1f}, v={calibrated_v:.1f}, "
+       f"x={x_robot:.5f}, y={y_robot:.5f}"
+   )
+   return x_robot, y_robot
+
+
+def _collect_destination_methods():
+   from src.robot_method_selector_multi import (
+       build_precision_place_methods,
+       build_precision_point_place_methods,
+   )
+
+   feedback = _operator_feedback()
+   idx = mic_mapping.get(mic_var.get())
+   if idx is None:
+       raise RuntimeError("A microphone is required to select a destination")
+   destination_audio = []
+
+   def destination_callback(recognizer, audio):
+       destination_audio.append(audio)
+       print("MULTIMODAL DESTINATION: Audio captured")
+
+   while True:
+       destination_audio.clear()
+       session = gesture_client.start(selection_kind="location", hold_seconds=3.0)
+       print(f"MULTIMODAL DESTINATION: Gesture session {session.session_id}")
+       recognizer = sr.Recognizer()
+       microphone = sr.Microphone(device_index=idx)
+       with microphone as source:
+           recognizer.adjust_for_ambient_noise(source, duration=0.5)
+       stop_destination_audio = recognizer.listen_in_background(
+           microphone,
+           destination_callback,
+           phrase_time_limit=5,
+       )
+       reminder_at = time.monotonic() + 120.0
+       chosen_zone = None
+       chosen_point = None
        try:
-           # **IMPORTANT: Change to precision workflow**
-           robot_methods[:] = select_robot_methods_multi(info, use_precision=True)
-           
-           # DEBUG: PRECISION MODE ANALYSIS
-           print(f"DEBUG PRECISION: robot_methods = {robot_methods}")
-           print(f"DEBUG PRECISION: 'suction_on' in methods = {'suction_on' in robot_methods}")
-           if 'suction_on' in robot_methods:
-               print(f"DEBUG PRECISION: suction_on is step {robot_methods.index('suction_on') + 1}/{len(robot_methods)}")
-           else:
-               print("DEBUG PRECISION: *** WARNING: suction_on NOT FOUND in robot_methods ***")
-           
-           if robot_methods:
-               print(f"SUCCESS: Robot workflow generated with {len(robot_methods)} steps")
-           output_text.insert(
-               tk.END,
-               "\nSelected Robot Methods:\n" +
-               "\n".join(robot_methods) + "\n"
-           )
-           if info.get('object') and 'object_index' in info:
-               object_type = info['object']
-               object_index = info.get('object_index', 0)
-               objs = [o for o in detected_objects if o['class_name'].lower() == object_type.lower()]
-               if objs and object_index < len(objs):
-                   if info.get("selection_mode") != "gesture":
-                       selected_object = objs[object_index]
-                   update_object_display()
-                   
-                   # **NEW: Write selection_data.json immediately after audio processing**
-                   txt_dir = os.path.join(PRE, 'txt_file')
-                   os.makedirs(txt_dir, exist_ok=True)
-                   selection_data = {
-                       "selected_object_id": selected_object['id'],
-                       "selected_object_class": selected_object['class_name'],
-                       "selected_object_confidence": selected_object['confidence'],
-                       "selection_timestamp": str(time.time()),
-                       # NEUE FELDER für bessere Objekt-Verknüpfung:
-                       "original_center_x": selected_object['center'][0],
-                       "original_center_y": selected_object['center'][1],
-                       "original_bbox": selected_object['bbox'],
-                       "original_confidence": selected_object['confidence'],
-                       "selection_phase": "overview",
-                       "selection_source": info.get("selection_mode", "speech"),
-                       "gesture_session_id": info.get("gesture_session_id"),
-                       "fingertip_pixel": gesture_result.get("fingertip_pixel"),
-                   }
-                   
-                   selection_data_path = os.path.join(txt_dir, "selection_data.json")
-                   with open(selection_data_path, 'w') as f:
-                       json.dump(selection_data, f, indent=2)
-                   output_text.insert(tk.END, f" SELECTION: Object selection saved to selection_data.json\n")
-                   print(f"DEBUG: Wrote selection_data.json for object ID {selected_object['id']}")
-           if robot_methods and selected_object is not None:
-               update_workflow_status(WorkflowStatus.READY_FOR_EXECUTION)
-           else:
-               update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
-       except Exception as e:
-           output_text.insert(tk.END, f"Robot method selection error: {e}\n")
-           update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
-           return
+           while chosen_zone is None and chosen_point is None:
+               app.update()
+               gesture_result = gesture_client.latest_result()
+               if gesture_result is not None and not _gesture_result_is_fresh(gesture_result):
+                   gesture_result = None
+               if destination_audio:
+                   audio = destination_audio.pop(0)
+                   try:
+                       text = _transcribe_audio(audio, "destination.wav")
+                   except Exception as error:
+                       print(f"MULTIMODAL DESTINATION: Transcription failed. {error}")
+                       text = ""
+                   print(f"MULTIMODAL DESTINATION SPEECH: {text}")
+                   chosen_zone = extract_zone(text)
+                   if chosen_zone is None and is_drop_here(text):
+                       if gesture_result is None:
+                           feedback.publish("Point at the destination and say drop here again.")
+                       else:
+                           chosen_point = gesture_result
+               if (
+                   chosen_zone is None
+                   and chosen_point is None
+                   and gesture_result is not None
+                   and float(gesture_result.get("hold_seconds", 0.0)) >= 10.0
+               ):
+                   chosen_point = gesture_result
+               if time.monotonic() >= reminder_at:
+                   feedback.publish(
+                       "Would you like to drop the object? Point at a place or say which zone."
+                   )
+                   reminder_at = time.monotonic() + 120.0
+               time.sleep(0.1)
+       finally:
+           stop_destination_audio(wait_for_stop=False)
+           gesture_client.finish()
+       if chosen_zone is not None:
+           prompt = f"Do you want me to place the object in {chosen_zone.replace('_', ' ')}?"
+           if _listen_for_confirmation(prompt):
+               return build_precision_place_methods(chosen_zone)
+           feedback.publish("Destination cancelled. Please choose again.")
+           continue
+       if chosen_point is not None:
+           if _listen_for_confirmation("Do you want me to drop the object there?"):
+               x_robot, y_robot = _transform_destination_point(chosen_point)
+               return build_precision_point_place_methods(x_robot, y_robot)
+           feedback.publish("Destination cancelled. Please point or speak again.")
 
 def execute_workflow_handler():
-    global detected_objects, selected_object
+    global detected_objects, selected_object, pending_command_info
     
     def simulation_output_callback(message):
         output_text.insert("end", message + "\n")
@@ -554,13 +780,7 @@ def execute_workflow_handler():
         # **NEW: Execute complete object processing pipeline before robot workflow**
         output_text.insert("end", "PIPELINE: Starting complete object processing pipeline...\n")
         
-        # Get the last command info to determine target object
-        current_command_info = None
-        if ie_instance and hasattr(ie_instance, 'command_history'):
-            try:
-                current_command_info = ie_instance.get_command_history()[-1] if ie_instance.get_command_history() else None
-            except:
-                current_command_info = None
+        current_command_info = pending_command_info
         
         if not current_command_info:
             output_text.insert("end", " ERROR: No command information found. Please give a voice command first.\n")
@@ -594,6 +814,11 @@ def execute_workflow_handler():
         # **REMOVED: execute_complete_object_pipeline - new precision workflow handles this**
         # The precision workflow now handles all object processing internally
         
+        destination_known = any(
+            method.startswith("move_to_target") or method.startswith("move_to_point")
+            for method in robot_methods
+        )
+
         if exec_mode.get() == "real":
             # Real robot execution with automatic re-detection
             update_workflow_status(WorkflowStatus.PROCESSING)
@@ -602,17 +827,48 @@ def execute_workflow_handler():
             try:
                 output_text.insert("end", "ROBOT REAL: Starting robot workflow...\n")
                 if robot_type.get() == "franka":
-                    from src.franka import execute_franka_workflow
-
-                    execute_franka_workflow(
-                        robot_methods,
-                        robot_ip=robot_ip.get(),
-                        simulation=False,
+                    from src.franka import (
+                        create_franka_workflow_session,
+                        execute_franka_workflow,
                     )
+
+                    if destination_known:
+                        execute_franka_workflow(
+                            robot_methods,
+                            robot_ip=robot_ip.get(),
+                            simulation=False,
+                        )
+                    else:
+                        with create_franka_workflow_session(
+                            robot_ip=robot_ip.get(),
+                            simulation=False,
+                        ) as franka_session:
+                            franka_session.execute(robot_methods)
+                            output_text.insert(
+                                "end",
+                                "MULTIMODAL: Object is held at the intermediate position.\n",
+                            )
+                            place_methods = _collect_destination_methods()
+                            franka_session.execute(place_methods)
                 else:
                     from src.robot_control import execute_robot_workflow
 
-                    execute_robot_workflow(robot_ip.get(), robot_methods)
+                    execute_robot_workflow(
+                        robot_ip.get(),
+                        robot_methods,
+                        return_home=destination_known,
+                    )
+                if not destination_known and robot_type.get() != "franka":
+                    output_text.insert(
+                        "end",
+                        "MULTIMODAL: Object is held at the intermediate position.\n",
+                    )
+                    place_methods = _collect_destination_methods()
+                    execute_robot_workflow(
+                        robot_ip.get(),
+                        place_methods,
+                        return_home=True,
+                    )
                 output_text.insert("end", " ROBOT REAL: Workflow successfully completed!\n")
                 
                 # Workflow erfolgreich beendet - keine finale Detection
@@ -631,19 +887,51 @@ def execute_workflow_handler():
             try:
                 output_text.insert("end", "SIMULATION: Starting workflow simulation...\n")
                 if robot_type.get() == "franka":
-                    from src.franka import execute_franka_workflow
-
-                    execute_franka_workflow(
-                        robot_methods,
-                        robot_ip=robot_ip.get(),
-                        simulation=True,
-                        output_callback=simulation_output_callback,
+                    from src.franka import (
+                        create_franka_workflow_session,
+                        execute_franka_workflow,
                     )
+
+                    if destination_known:
+                        execute_franka_workflow(
+                            robot_methods,
+                            robot_ip=robot_ip.get(),
+                            simulation=True,
+                            output_callback=simulation_output_callback,
+                        )
+                    else:
+                        with create_franka_workflow_session(
+                            robot_ip=robot_ip.get(),
+                            simulation=True,
+                            output_callback=simulation_output_callback,
+                        ) as franka_session:
+                            franka_session.execute(robot_methods)
+                            output_text.insert(
+                                "end",
+                                "MULTIMODAL: Simulated object is at the intermediate position.\n",
+                            )
+                            place_methods = _collect_destination_methods()
+                            franka_session.execute(place_methods)
                 else:
                     from src.robot_control import execute_robot_workflow_simulation
 
                     execute_robot_workflow_simulation(
-                        robot_ip.get(), robot_methods, simulation_output_callback
+                        robot_ip.get(),
+                        robot_methods,
+                        simulation_output_callback,
+                        return_home=destination_known,
+                    )
+                if not destination_known and robot_type.get() != "franka":
+                    output_text.insert(
+                        "end",
+                        "MULTIMODAL: Simulated object is at the intermediate position.\n",
+                    )
+                    place_methods = _collect_destination_methods()
+                    execute_robot_workflow_simulation(
+                        robot_ip.get(),
+                        place_methods,
+                        simulation_output_callback,
+                        return_home=True,
                     )
                 output_text.insert("end", " SIMULATION: Workflow simulation completed successfully!\n")
                 update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
