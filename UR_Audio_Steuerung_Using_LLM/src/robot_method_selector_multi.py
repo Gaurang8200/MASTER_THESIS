@@ -1,3 +1,4 @@
+# MO_Changes
 """
 Enhanced Robot Method Selector for Multi-Object Detection System
 Handles object selection and robot workflow configuration for multiple detected objects
@@ -111,6 +112,47 @@ def prepare_object_data_for_robot(selected_object):
         print(f"ERROR: Error preparing object data: {e}")
         return False
 
+def build_precision_pick_methods() -> list[str]:
+    return [
+        "move_to_main_position",
+        "detect_object",
+        "convert_pixel_to_robot",
+        "move_to_selected_object",
+        "precision_detection",
+        "filter_and_prepare_selected_object_after_precision_detection",
+        "precision_pca_calculation",
+        "precision_direction_object",
+        "pick_the_object",
+        "suction_on",
+        "pick_up_object",
+        "intermediate_position",
+    ]
+
+
+def build_precision_place_methods(target_location: str) -> list[str]:
+    if target_location not in {"Zone_1", "Zone_2", "Zone_3"}:
+        raise ValueError(f"Invalid target location {target_location}")
+    return [
+        f"move_to_target({target_location})",
+        "final_position",
+        "suction_off",
+        "intermediate_position",
+        "move_to_main_position",
+        "delet_txt_file",
+    ]
+
+
+def build_precision_point_place_methods(x: float, y: float) -> list[str]:
+    return [
+        f"move_to_point({x:.6f},{y:.6f})",
+        "final_position",
+        "suction_off",
+        "intermediate_position",
+        "move_to_main_position",
+        "delet_txt_file",
+    ]
+
+
 def select_robot_methods_precision(info: dict) -> list:
     """
     Precision robot method selection with second detection and final object filtering
@@ -161,42 +203,16 @@ def select_robot_methods_precision(info: dict) -> list:
         print("WARNING: Dangerous command detected. Aborting.")
         return []
     
-    if not target_location or target_location not in ['Zone_1', 'Zone_2', 'Zone_3']:
+    if target_location and target_location not in ['Zone_1', 'Zone_2', 'Zone_3']:
         print(f"ERROR: Invalid target location: {target_location}")
         return []
     
     # Build PRECISION WORKFLOW sequence with final object filtering
-    methods = []
-    
-    print(f"INFO: Building PRECISION WORKFLOW for {selected_object['class_name']} → {target_location}")
-    
-    # Standard beginning
-    methods.append("move_to_main_position")
-    methods.append("detect_object")
-    methods.append("convert_pixel_to_robot")
-    
-    # KORRIGIERTE PRECISION SEQUENCE (entspricht Vorgänger-Workflow)
-    methods.append("move_to_selected_object")                                    # Heranfahren an gewähltes Objekt
-    methods.append("precision_detection")                                        # Zweite Detection (NUR Detection)
-    methods.append("filter_and_prepare_selected_object_after_precision_detection")  # Objektfilterung
-    methods.append("precision_pca_calculation")                                  # PCA nur für gewähltes Objekt
-    methods.append("precision_direction_object")                                 # Direction nur für gewähltes Objekt
-    
-    # Continue with standard picking and placing
-    methods.append("pick_the_object")               # Greifen mit finalen Daten
-    methods.append("suction_on")                    # Ansaugen
-    methods.append("pick_up_object")                # Anheben
-    methods.append("intermediate_position")         # Zwischenposition
-    
-    # Target-specific movement
-    methods.append(f"move_to_target({target_location})")  # REAKTIVIERT: Setzt Zone-Koordinaten (ohne Bewegung)
-    methods.append("final_position")                      # Ablegen (verwendet bereits gesetzte Zone-Koordinaten)
-    methods.append("suction_off")                         # Loslassen
-    
-    # Cleanup
-    methods.append("intermediate_position")         # Zurück zur Zwischenposition
-    methods.append("move_to_main_position")         # Zurück zur Hauptposition
-    methods.append("delet_txt_file")                # Dateien löschen
+    destination = target_location or "destination confirmation"
+    print(f"INFO: Building PRECISION WORKFLOW for {selected_object['class_name']} → {destination}")
+    methods = build_precision_pick_methods()
+    if target_location:
+        methods.extend(build_precision_place_methods(target_location))
     
     print(f"INFO: PRECISION WORKFLOW generated with {len(methods)} steps")
     print("SEQUENCE: Overview Detection → Approach → PRECISION Detection → Filter Object → PCA/Direction → Execute")
@@ -338,4 +354,4 @@ def main():
         print(f"\nERROR: No robot workflow generated")
 
 if __name__ == "__main__":
-    main() 
+    main()

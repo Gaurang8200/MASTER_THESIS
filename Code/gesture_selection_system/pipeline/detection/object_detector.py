@@ -1,3 +1,4 @@
+# MO_Changes
 """Object detector of the existing pick and drop system.
 
 Loads the YOLOv5 weights of that repository in process and returns detections in
@@ -16,6 +17,8 @@ frame to frame by overlap and carry a stable id.
 from __future__ import annotations
 
 import logging
+import os
+import pathlib
 import time
 from dataclasses import dataclass
 
@@ -125,7 +128,13 @@ class Yolov5ObjectDetector:
             raise RuntimeError("torch is required for object detection") from exc
 
         started = time.perf_counter()
-        model = torch.hub.load(str(repo), "custom", path=str(weights), source="local")
+        original_windows_path = pathlib.WindowsPath
+        if os.name != "nt":
+            pathlib.WindowsPath = pathlib.PosixPath
+        try:
+            model = torch.hub.load(str(repo), "custom", path=str(weights), source="local")
+        finally:
+            pathlib.WindowsPath = original_windows_path
         model.conf = self._confidence
         model.to(self._device)
         self._model = model

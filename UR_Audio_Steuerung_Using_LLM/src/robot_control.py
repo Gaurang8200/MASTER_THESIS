@@ -33,6 +33,18 @@ def set_simulation_mode(enabled=True, output_callback=None):
     simulation_mode = enabled
     simulation_output_callback = output_callback
 
+
+def transform_ur_pixel_to_robot(pixel_x, pixel_y):
+    previous_directory = os.getcwd()
+    os.chdir(PREDECESSOR_DIR)
+    try:
+        import pixel2robot_multi
+
+        x_robot, y_robot, _ = pixel2robot_multi.pixel2robot(pixel_x, pixel_y)
+        return float(x_robot), float(y_robot)
+    finally:
+        os.chdir(previous_directory)
+
 def sim_print(message: str) -> None:
     """Print simulation output to the terminal and optional interface."""
     print(message)
@@ -1369,6 +1381,24 @@ def execute_robot_method(method_name, robot_ip):
         if simulation_mode:
             sim_print(f"SUCCESS SIMULATION: Zone coordinates prepared for {target}")
             # time.sleep(0.5)  # Auskommentiert da keine Bewegung
+    elif method_name.startswith("move_to_point(") and method_name.endswith(")"):
+        coordinates = method_name[len("move_to_point("):-1].split(",")
+        if len(coordinates) != 2:
+            raise ValueError(f"Invalid point target method {method_name}")
+        object_class = determine_current_object_class()
+        x_place = float(coordinates[0])
+        y_place = float(coordinates[1])
+        z_place = get_object_place_height(object_class)
+        if simulation_mode:
+            sim_print(
+                "TARGET SIMULATION: Calibrated point coordinates set: "
+                f"({x_place}, {y_place}, {z_place})"
+            )
+        else:
+            print(
+                "[DEBUG] move_to_point → "
+                f"x_place={x_place}, y_place={y_place}, z_place={z_place}"
+            )
     elif method_name == "final_position":
         final_position(robot_ip)
     elif method_name in ("suction_off", "release_object"):
@@ -1427,7 +1457,12 @@ def execute_robot_method(method_name, robot_ip):
         else:
             print(f"Undefined method: {method_name}")
 
-def execute_robot_workflow_simulation(robot_ip, method_list, output_callback=None):
+def execute_robot_workflow_simulation(
+    robot_ip,
+    method_list,
+    output_callback=None,
+    return_home=True,
+):
     """
     Execute robot workflow in simulation mode with detailed output
     UPDATED: Now supports LEGACY WORKFLOW system
@@ -1575,13 +1610,16 @@ def execute_robot_workflow_simulation(robot_ip, method_list, output_callback=Non
     
     sim_print("\n" + "="*60)
     sim_print("COMPLETE SIMULATION: Workflow simulation completed!")
-    sim_print("READY SIMULATION: Robot returned to main position - ready for next command")
+    if return_home:
+        sim_print("READY SIMULATION: Robot returned to main position and is ready")
+    else:
+        sim_print("READY SIMULATION: Robot remains at the intermediate position")
     
     # Reset simulation mode
     simulation_mode = False
     simulation_output_callback = None
 
-def execute_robot_workflow(robot_ip, method_list):
+def execute_robot_workflow(robot_ip, method_list, return_home=True):
     """
     Execute real robot workflow with return to main position
     UPDATED: Now supports LEGACY WORKFLOW system
@@ -1631,10 +1669,12 @@ def execute_robot_workflow(robot_ip, method_list):
             else:
                 time.sleep(1)   # Standard-Wartezeit für andere Schritte
         
-        # Return to main position after workflow completion
-        print("[DEBUG] execute_robot_workflow → returning to main position")
-        move_to_main_position(robot_ip)
-        print("SUCCESS REAL: Workflow completed - robot ready for next command")
+        if return_home:
+            print("[DEBUG] execute_robot_workflow → returning to main position")
+            move_to_main_position(robot_ip)
+            print("SUCCESS REAL: Workflow completed and robot is ready")
+        else:
+            print("SUCCESS REAL: Pick phase completed at intermediate position")
 
 def execute_legacy_robot_workflow(robot_ip, target_zone="Zone_1"):
     """

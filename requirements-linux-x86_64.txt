@@ -1,6 +1,7 @@
 # MO_Changes
 # Ubuntu x86 64 with Python 3.12
-# System packages required: espeak-ng ffmpeg portaudio19-dev python3-tk
+# Run before pip installation
+# sudo apt install build-essential espeak-ng ffmpeg libgl1 libglib2.0-0 portaudio19-dev python3-tk python3.12-venv
 
 dill==0.3.8
 franky-control==1.1.4
@@ -20,7 +21,6 @@ Pillow==12.2.0
 psutil==7.2.2
 PyAudio==0.2.14
 pydantic==2.13.3
-pytest==9.0.3
 python-dotenv==1.2.2
 pyttsx3==2.99
 PyYAML==6.0.3

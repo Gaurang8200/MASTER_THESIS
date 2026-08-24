@@ -15,7 +15,7 @@ pipeline/
 │   ├── main_pipeline.py          full chain, JSON output, robot handoff
 │   └── webcam_gesture_demo.py    gesture layer only, for checking the model
 ├── detection/
-│   ├── gesture_detector.py       YOLO11s gesture model
+│   ├── gesture_detector.py       trained gesture detection model
 │   └── object_detector.py        YOLOv5 detector of the existing repository
 ├── logic/                        the interaction rules
 │   ├── gesture_state_machine.py  selection mode policy
@@ -27,7 +27,7 @@ pipeline/
 └── support/
     ├── schemas.py                data contracts and the JSON output
     ├── config.py                 typed configuration loader
-    ├── gesture_classes.py        the four classes, single source of truth
+    ├── gesture_classes.py        trained class order, single source of truth
     ├── camera.py                 webcam resource
     └── visualization.py          OpenCV overlays
 ```
@@ -38,8 +38,7 @@ Every confirmation is a five second hold. Seconds rather than frame counts, so a
 slow machine behaves like a fast one.
 
 1. `open_palm_start` held for five seconds turns selection mode on.
-2. `closed_palm_stop` held for five seconds turns it off. The stop gesture wins
-   whenever both palms appear in the same frame.
+2. The standalone mode turns off after the configured gesture timeout.
 3. With selection mode on, `pointing_finger` and `index_fingertip` together
    produce a fingertip point at the center of the fingertip box.
 4. The fingertip selects the smallest object box it sits inside. The existing
@@ -63,7 +62,7 @@ slow machine behaves like a fast one.
 
 ## Run
 
-Needs `models/best.pt`, the YOLOv5 weights of the existing repository, and a
+Needs `models/handgestureyolov8m960100.pt`, the YOLOv5 weights of the existing repository, and a
 webcam.
 
 Gesture layer only, the quickest way to check detection on a bare hand and on a
@@ -178,8 +177,7 @@ only machine will report every frame as degraded at the default value.
 
 ## Safety
 
-1. Selection mode off is the safe state. The stop gesture beats the start gesture
-   and a failed inference never keeps a hold alive.
+1. Selection mode off is the safe state. A failed inference never keeps a hold alive.
 2. The gesture checkpoint is rejected on load when its class order does not match
    `support/gesture_classes.py`.
 3. Detections below the configured confidence never reach the selection logic.

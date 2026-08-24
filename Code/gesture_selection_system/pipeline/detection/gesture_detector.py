@@ -1,4 +1,5 @@
-"""YOLO11s gesture detector.
+# MO_Changes
+"""YOLO gesture detector.
 
 The detector owns the model session, so it exposes explicit start, close and
 health methods. Ultralytics and torch are imported inside ``start`` to keep
@@ -15,13 +16,15 @@ from pathlib import Path
 import numpy as np
 
 from config import ConfidenceConfig, ModelConfig, resolve_device
-from gesture_classes import CLASS_IDS
 from schemas import BoundingBox, GestureDetection, GestureFrame, GestureName
 
 LOGGER = logging.getLogger(__name__)
 
 
-def verify_model_classes(model_names: object) -> None:
+def verify_model_classes(
+    model_names: object,
+    expected_names: dict[int, GestureName],
+) -> None:
     """Reject a checkpoint whose classes do not match the pipeline.
 
     The model is trained outside this repository, so the class order of the
@@ -32,18 +35,19 @@ def verify_model_classes(model_names: object) -> None:
         LOGGER.warning("model_class_names_unavailable, skipping the class check")
         return
 
-    found = {str(name): int(index) for index, name in model_names.items()}
-    if found != CLASS_IDS:
+    found = {int(index): str(name) for index, name in model_names.items()}
+    expected = {int(index): gesture.value for index, gesture in expected_names.items()}
+    if found != expected:
         raise ValueError(
             "the checkpoint was trained on different classes.\n"
-            f"  expected: {CLASS_IDS}\n"
+            f"  expected: {expected}\n"
             f"  found:    {found}\n"
             "Retrain with the class order above or fix the export."
         )
 
 
 class GestureDetector:
-    """Runs YOLO11s Detect on a frame and returns typed gesture detections.
+    """Runs the trained detector on a frame and returns typed gesture detections.
 
     The same trained model covers bare hands and gloved hands, so no separate
     code path exists for gloves. Glove coverage is a property of the training
@@ -82,7 +86,7 @@ class GestureDetector:
         if not weights.is_file():
             raise FileNotFoundError(
                 f"gesture weights not found at {weights}. "
-                "Place the trained YOLO11s file there or point model.weights at it."
+                "Place the trained gesture model there or point model.weights at it."
             )
 
         try:
@@ -99,7 +103,7 @@ class GestureDetector:
 
         started = time.perf_counter()
         model = YOLO(str(weights))
-        verify_model_classes(getattr(model, "names", None))
+        verify_model_classes(getattr(model, "names", None), self._class_ids)
         self._model = model
         load_ms = (time.perf_counter() - started) * 1000.0
         LOGGER.info(

@@ -35,6 +35,7 @@ class WorkflowContext:
     selected_class: int | None = None
     selected_orientation: tuple[float, float, float, float] | None = None
     target_zone: CartesianPose | None = None
+    target_is_dynamic: bool = False
 
 
 class FrankaAudioWorkflow:
@@ -52,20 +53,32 @@ class FrankaAudioWorkflow:
         self._simulation = simulation
         self._output = output
         self._context = WorkflowContext()
+        self._started = False
 
     def execute(self, method_list: Sequence[str]) -> None:
         if not method_list:
             raise ValueError("Franka workflow requires at least one method")
         self._preflight(method_list)
+        self._load_selection_context()
+        self.start()
+        for method_name in method_list:
+            emit_method_execution(method_name, self._output)
+            self._execute_method(method_name)
+
+    def start(self) -> None:
+        if self._started:
+            return
         self._arm.start()
         if not self._arm.health():
-            raise RuntimeError("Franka robot health check failed")
-        try:
-            for method_name in method_list:
-                emit_method_execution(method_name, self._output)
-                self._execute_method(method_name)
-        finally:
             self._arm.close()
+            raise RuntimeError("Franka robot health check failed")
+        self._started = True
+
+    def close(self) -> None:
+        if not self._started:
+            return
+        self._arm.close()
+        self._started = False
 
     def _preflight(self, method_list: Sequence[str]) -> None:
         supported = {
@@ -94,6 +107,10 @@ class FrankaAudioWorkflow:
                 zone_name = match.group(1) or match.group(2)
                 if not self._simulation:
                     self._config.zone(zone_name)
+                continue
+            if method_name.startswith("move_to_point("):
+                if re.fullmatch(r"move_to_point\([^,]+,[^)]+\)", method_name) is None:
+                    raise ValueError(f"Invalid point target method {method_name}")
                 continue
             if method_name not in supported:
                 raise ValueError(f"Unsupported Franka workflow method {method_name}")
@@ -128,6 +145,9 @@ class FrankaAudioWorkflow:
         }
         if method_name.startswith("move_to_target"):
             self._select_zone(method_name)
+            return
+        if method_name.startswith("move_to_point("):
+            self._select_point(method_name)
             return
         handler = handlers.get(method_name)
         if handler is None:
@@ -265,11 +285,32 @@ class FrankaAudioWorkflow:
             ),
             zone.quaternion,
         )
+        self._context.target_is_dynamic = False
+
+    def _select_point(self, method_name: str) -> None:
+        values = method_name[len("move_to_point("):-1].split(",")
+        if len(values) != 2:
+            raise ValueError(f"Invalid point target method {method_name}")
+        object_class = self._require_selected_class()
+        self._context.target_zone = CartesianPose.create(
+            (
+                float(values[0]),
+                float(values[1]),
+                self._config.place_height(object_class),
+            ),
+            self._config.default_orientation,
+        )
+        self._context.target_is_dynamic = True
+        x, y, z = self._context.target_zone.translation
+        self._output(
+            f"FRANKA POINT TARGET: x={x:.4f}, y={y:.4f}, z={z:.4f}"
+        )
 
     def _move_to_zone(self) -> None:
         if self._context.target_zone is None:
             raise RuntimeError("Franka target zone has not been selected")
-        self._validate_workspace(self._context.target_zone.translation)
+        if not self._context.target_is_dynamic:
+            self._validate_workspace(self._context.target_zone.translation)
         self._arm.move_pose(self._context.target_zone)
 
     def _release(self) -> None:
@@ -323,6 +364,13 @@ class FrankaAudioWorkflow:
             raise RuntimeError("Selected object has no class")
         return self._context.selected_class
 
+    def _load_selection_context(self) -> None:
+        selection_path = TXT_DIR / "selection_data.json"
+        if not selection_path.is_file():
+            return
+        data = json.loads(selection_path.read_text(encoding="utf-8"))
+        self._context.selected_class = self._read_selected_class(data)
+
     @staticmethod
     def _read_selected_class(selection_data: dict[str, object]) -> int:
         label_path = TXT_DIR / "label.txt"
@@ -334,17 +382,48 @@ class FrankaAudioWorkflow:
             raise ValueError(f"Unknown selected object class {class_name}")
         return class_ids[class_name]
 
-def execute_franka_workflow(
-    method_list: Sequence[str],
+class FrankaWorkflowSession:
+    def __init__(
+        self,
+        workflow: FrankaAudioWorkflow,
+        simulation: bool,
+        output_callback: Callable[[str], None] | None,
+    ) -> None:
+        self._workflow = workflow
+        self._simulation = simulation
+        self._output_callback = output_callback
+
+    def __enter__(self) -> "FrankaWorkflowSession":
+        perception_steps.set_simulation_mode(
+            self._simulation,
+            self._output_callback,
+        )
+        try:
+            self._workflow.start()
+        except Exception:
+            perception_steps.set_simulation_mode(False, None)
+            raise
+        return self
+
+    def execute(self, method_list: Sequence[str]) -> None:
+        self._workflow.execute(method_list)
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        try:
+            self._workflow.close()
+        finally:
+            perception_steps.set_simulation_mode(False, None)
+
+
+def create_franka_workflow_session(
     robot_ip: str | None = None,
     simulation: bool = False,
     output_callback: Callable[[str], None] | None = None,
-) -> None:
+) -> FrankaWorkflowSession:
     config = load_franka_config()
     if robot_ip and robot_ip.strip():
         config = FrankaConfig(**{**config.__dict__, "robot_ip": robot_ip.strip()})
     output = output_callback or print
-    perception_steps.set_simulation_mode(simulation, output_callback)
     transformer = OriginalFrankaPixelTransformer(
         (config.calibration_width, config.calibration_height),
         config.mirror_x,
@@ -359,10 +438,22 @@ def execute_franka_workflow(
             config.gripper_speed,
             config.gripper_force,
         )
-    try:
-        FrankaAudioWorkflow(arm, config, transformer, simulation, output).execute(method_list)
-    finally:
-        perception_steps.set_simulation_mode(False, None)
+    workflow = FrankaAudioWorkflow(arm, config, transformer, simulation, output)
+    return FrankaWorkflowSession(workflow, simulation, output_callback)
+
+
+def execute_franka_workflow(
+    method_list: Sequence[str],
+    robot_ip: str | None = None,
+    simulation: bool = False,
+    output_callback: Callable[[str], None] | None = None,
+) -> None:
+    with create_franka_workflow_session(
+        robot_ip=robot_ip,
+        simulation=simulation,
+        output_callback=output_callback,
+    ) as session:
+        session.execute(method_list)
 
 
 def prepare_franka_for_detection(robot_ip: str | None = None) -> None:
@@ -382,6 +473,23 @@ def prepare_franka_for_detection(robot_ip: str | None = None) -> None:
         arm.move_joints(config.home_joints)
     finally:
         arm.close()
+
+
+def transform_franka_pixel_to_robot(
+    pixel_x: float,
+    pixel_y: float,
+    frame_width: int,
+    frame_height: int,
+) -> RobotPoint:
+    config = load_franka_config()
+    transformer = OriginalFrankaPixelTransformer(
+        (config.calibration_width, config.calibration_height),
+        config.mirror_x,
+    )
+    return transformer.transform(
+        PixelPoint(float(pixel_x), float(pixel_y)),
+        (int(frame_width), int(frame_height)),
+    )
 
 
 def _read_detection_image_size() -> tuple[int, int]:

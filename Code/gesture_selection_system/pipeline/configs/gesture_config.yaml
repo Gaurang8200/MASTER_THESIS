@@ -1,13 +1,14 @@
 # Gesture selection system configuration.
 # Every path is resolved relative to the pipeline folder unless the value is
 # already absolute.
+# This file contains only values read by the multimodal speech gesture service.
 
 model:
-  # YOLO11s Detect weights downloaded from Ultralytics HUB.
-  weights: ../models/best.pt
+  # Gesture detection weights downloaded from Ultralytics HUB.
+  weights: ../models/handgestureyolov8m960100.pt
   # auto resolves to cuda, then mps, then cpu.
   device: auto
-  imgsz: 640
+  imgsz: 960
   half: false
   max_detections: 20
   # Frames slower than this budget are reported as degraded in the output.
@@ -17,113 +18,37 @@ model:
 # It reports bounding boxes and no segmentation masks.
 object_model:
   # Folder that holds the YOLOv5 source, the one with hubconf.py.
-  repo_path: "../../Object-Detection-Using-YOLO-v5-main 2/yolov5"
-  weights: "../../Object-Detection-Using-YOLO-v5-main 2/yolov5/my_model.pt"
+  repo_path: "../../../UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5"
+  weights: "../../../UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/my_model.pt"
   imgsz: 640
   # Overlap needed to keep an object id from one frame to the next. Without a
   # stable id the selection hold could never complete.
   track_min_iou: 0.5
 
-# UR controller of the existing pick and drop system.
-robot:
-  host: "10.84.59.207"
-  port: 30002
-  # Motion stays off until it is switched on deliberately.
-  dispatch: false
-  acceleration: 0.1
-  velocity: 0.1
-  timeout_s: 3.0
-  # File the existing pipeline reads the picked pixel from. Its detection.py
-  # writes the same file, so a pick handed over this way replaces that step.
-  center_point_file: "../../Object-Detection-Using-YOLO-v5-main 2/txt_file/center_point.txt"
-  # File the confirmed place coordinate is written to, in the same shape
-  # pixel2robot.py writes robot_coordinates.txt.
-  place_coordinates_file: "../../Object-Detection-Using-YOLO-v5-main 2/txt_file/place_coordinates.txt"
-
 # Mapping from gesture name to the class index used during training.
+# Every checkpoint class must be listed so model validation can succeed.
 class_ids:
   open_palm_start: 0
-  closed_palm_stop: 1
-  pointing_finger: 2
-  index_fingertip: 3
+  pointing_finger: 1
+  index_fingertip: 2
 
 confidence:
-  # Palm and pointing gestures drive the mode transitions and need a strong score.
-  gesture: 0.75
+  # The pointing gesture must have a strong score.
+  gesture: 0.70
   # The fingertip box is small, so it is allowed a lower score.
   fingertip: 0.65
   # Objects below this score never take part in selection.
   object: 0.70
-
-stability:
-  # How long a gesture has to be held before it counts, in seconds.
-  # Seconds rather than frame counts, so a slow machine behaves like a fast one.
-  activate_seconds: 5.0
-  deactivate_seconds: 5.0
-  select_seconds: 5.0
-  place_seconds: 5.0
-  # Selection mode falls back to off after this long without any gesture.
-  # Set to 0 to disable the timeout.
-  lost_gesture_timeout_seconds: 3.0
 
 selection:
   # The fingertip selects the smallest object box it sits inside.
   # Set a ratio between 0 and 1 to also require the fingertip to be that close to
   # the box center, measured in half box widths. Leave empty to accept the box.
   max_center_distance_ratio:
-  # A pointing_finger detection must be present together with the fingertip.
-  require_pointing_finger: true
-  # Keep the selected object latched until selection mode turns off or reset is called.
-  hold_selection_until_mode_off: true
-  # A place point is only reported after an object has been selected.
-  require_selection_before_place: true
-  # Any spot inside the table area can be a place point. An object lying there
-  # does not block it.
-  ignore_objects_for_place: true
-
-workspace:
-  # Calibrated table area in normalized image coordinates, clockwise.
-  # Values are fractions of width and height so the polygon follows the frame size.
-  normalized_polygon:
-    - [0.08, 0.30]
-    - [0.92, 0.30]
-    - [0.92, 0.96]
-    - [0.08, 0.96]
-
-# Calibration turns a place pixel into a robot coordinate and is used nowhere
-# else. Gesture classification and object selection stay in image coordinates.
-place_calibration:
-  # Directory that holds function_pool.py and the calibration json files.
-  repo_path: "../../Object-Detection-Using-YOLO-v5-main 2"
-  wp2camera_json: output_wp2camera.json
-  c2f_json: output_c2f.json
-  robot_poses_json: robot_poses.json
-  # Index of the robot pose used during the calibration recording.
-  # The existing pixel2robot.py uses the same index.
-  pose_index: 15
-  # Resolution the calibration was recorded at. Camera pixels are scaled into
-  # this resolution before the existing transform is applied. The value matches
-  # convert_origin_for_robot in the existing detection.py.
-  calibration_resolution: [2560, 1472]
-  # Height the object is released at. The existing program picks this per object
-  # type and the values it uses sit between 0.040 and 0.067.
-  place_z_m: 0.05
-  # Fixed tool orientation for a place, a rotation vector in radians.
-  # Same value the existing final_position uses.
-  place_orientation: [2.221, 2.221, 0.0]
 
 camera:
   index: 0
   width: 1280
   height: 720
   # Mirror the preview so that moving the hand right moves the overlay right.
-  flip_horizontal: true
-
-visualization:
-  show_object_boxes: true
-  show_workspace: true
-  show_hud: true
-  fingertip_marker_radius_px: 10
-
-logging:
-  level: INFO
+  flip_horizontal: false

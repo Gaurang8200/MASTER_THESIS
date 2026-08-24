@@ -5,10 +5,15 @@ __pycache__/
 .DS_Store
 
 venv/
+.venv/
+venv*/
 .pytest_cache/
+backup/
 
 # Trained weights, datasets and training runs are tracked outside the repository
 *.pt
+!Code/gesture_selection_system/models/handgestureyolov8m960100.pt
+!UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/my_model.pt
 Code/gesture_selection_system/data/
 Code/gesture_selection_system/Data_Collection/
 Code/gesture_selection_system/runs/
@@ -21,8 +26,25 @@ Handgesture_FrankaEmika/snapshots/
 UR_Audio_Steuerung_Using_LLM/venv_wrapper/
 UR_Audio_Steuerung_Using_LLM/models/
 UR_Audio_Steuerung_Using_LLM/data/
-UR_Audio_Steuerung_Using_LLM/tools/ffmpeg/
-UR_Audio_Steuerung_Using_LLM/tools/flac/
+UR_Audio_Steuerung_Using_LLM/tools/
 
-# Whole vendored fork with its own git history and remote, not a submodule
-UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/
+# Local state inside the vendored detection runtime
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/.git/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/.git/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/.github/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/.github/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/venv/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/work/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/__MACOSX/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/ObjectDetection.egg-info/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/log/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/data/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/get-pip.py
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/requirements.txt
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/photos/*
+!UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/photos/.gitkeep
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/txt_file/*
+!UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/txt_file/.gitkeep
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/runs/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/txt_file/
+UR_Audio_Steuerung_Using_LLM/Code-YOLOv5-Windows_llm/yolov5/requirements.txt

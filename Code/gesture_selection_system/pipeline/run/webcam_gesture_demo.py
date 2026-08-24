@@ -1,8 +1,9 @@
+# MO_Changes
 """Webcam gesture demo.
 
 Shows only the gesture layer, which is the fastest way to check that the model
-sees the four classes on a bare hand and on a gloved hand and that the five
-frame activation and deactivation rules behave. Object selection is not part of
+sees the three trained classes on a bare hand and on a gloved hand and that the
+time based activation rule behaves. Object selection is not part of
 this demo, use main_pipeline.py for that.
 
     python run/webcam_gesture_demo.py
@@ -118,7 +119,7 @@ def _hud_lines(state, gesture_frame, fps: float) -> list[str]:
     detected = ", ".join(sorted({d.gesture.value for d in gesture_frame.detections})) or "none"
     lines = [
         f"mode: {state.mode.value.upper()}  reason: {state.reason}",
-        f"open held: {state.open_palm_held_s:.1f}s   stop held: {state.closed_palm_held_s:.1f}s",
+        f"open held: {state.open_palm_held_s:.1f}s",
         f"detected: {detected}",
         f"inference: {gesture_frame.latency_ms:.0f} ms   fps: {fps:.1f}",
         "q quit   r reset",

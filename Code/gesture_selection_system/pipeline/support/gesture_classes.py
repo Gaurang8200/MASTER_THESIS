@@ -1,3 +1,4 @@
+# MO_Changes
 """Single source of truth for the gesture classes.
 
 The order here is the order the model was trained on. The configuration loader
@@ -11,7 +12,7 @@ from enum import Enum
 
 
 class GestureName(str, Enum):
-    """The four gesture classes the YOLO11s Detect model is trained on."""
+    """Gesture names understood by the runtime."""
 
     OPEN_PALM_START = "open_palm_start"
     CLOSED_PALM_STOP = "closed_palm_stop"
@@ -21,7 +22,6 @@ class GestureName(str, Enum):
 
 GESTURE_CLASS_ORDER: tuple[str, ...] = (
     GestureName.OPEN_PALM_START.value,
-    GestureName.CLOSED_PALM_STOP.value,
     GestureName.POINTING_FINGER.value,
     GestureName.INDEX_FINGERTIP.value,
 )
