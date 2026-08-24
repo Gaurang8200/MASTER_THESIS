@@ -204,7 +204,15 @@ class FrankaAudioWorkflow:
         if self._simulation:
             self._output("FRANKA SIMULATION: Precision detection accepted")
             return
-        perception_steps.precision_detection(self._config.robot_ip)
+        previous_robot_type = os.environ.get("ROBOT_TYPE")
+        os.environ["ROBOT_TYPE"] = "franka"
+        try:
+            perception_steps.precision_detection(self._config.robot_ip)
+        finally:
+            if previous_robot_type is None:
+                os.environ.pop("ROBOT_TYPE", None)
+            else:
+                os.environ["ROBOT_TYPE"] = previous_robot_type
 
     def _prepare_precision_object(self) -> None:
         if self._simulation:
@@ -482,13 +490,20 @@ def transform_franka_pixel_to_robot(
     frame_height: int,
 ) -> RobotPoint:
     config = load_franka_config()
+    expected_size = (config.calibration_width, config.calibration_height)
+    actual_size = (int(frame_width), int(frame_height))
+    if actual_size != expected_size:
+        raise ValueError(
+            f"Franka destination image is {actual_size[0]} x {actual_size[1]} but "
+            f"the active calibration requires {expected_size[0]} x {expected_size[1]}"
+        )
     transformer = OriginalFrankaPixelTransformer(
-        (config.calibration_width, config.calibration_height),
+        expected_size,
         config.mirror_x,
     )
     return transformer.transform(
         PixelPoint(float(pixel_x), float(pixel_y)),
-        (int(frame_width), int(frame_height)),
+        actual_size,
     )
 
 

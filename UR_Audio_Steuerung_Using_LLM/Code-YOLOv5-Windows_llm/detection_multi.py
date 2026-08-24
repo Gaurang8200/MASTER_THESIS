@@ -1,3 +1,4 @@
+# MO_Changes
 import cv2
 import os
 import subprocess
@@ -12,7 +13,16 @@ DETECTION_SCRIPT = 'yolov5/detect_multi_objects.py'  # Use new multi-object dete
 WEIGHTS = 'my_model.pt'
 CAMERA_INDEX = 0
 ROBOT_RESOLUTION = (2560, 1472)
-IMAGE_RESOLUTION = (2560, 1472)
+UNIVERSAL_CAPTURE_RESOLUTION = (2560, 1472)
+FRANKA_CAPTURE_RESOLUTION = (1280, 720)
+IMAGE_RESOLUTION = UNIVERSAL_CAPTURE_RESOLUTION
+
+
+def get_capture_resolution():
+    robot_type = os.environ.get("ROBOT_TYPE", "universal").strip().lower()
+    if robot_type == "franka":
+        return FRANKA_CAPTURE_RESOLUTION
+    return UNIVERSAL_CAPTURE_RESOLUTION
 
 # === Base directory configuration ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # Code-YOLOv5-Windows_llm directory
@@ -69,28 +79,47 @@ class MultiObjectDetector:
     
     def capture_image(self, filename="photo_1.jpg"):
         """Capture image from camera"""
+        cap = None
         try:
             cap = cv2.VideoCapture(CAMERA_INDEX)
             if not cap.isOpened():
                 raise Exception(f"Cannot open camera {CAMERA_INDEX}")
-            
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, IMAGE_RESOLUTION[0])
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, IMAGE_RESOLUTION[1])
+
+            capture_width, capture_height = get_capture_resolution()
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_height)
             
             ret, frame = cap.read()
             if not ret:
                 raise Exception("Failed to capture image")
+
+            actual_height, actual_width = frame.shape[:2]
+            robot_type = os.environ.get("ROBOT_TYPE", "universal").strip().lower()
+            print(
+                f"CAMERA: Requested {capture_width} x {capture_height}, "
+                f"received {actual_width} x {actual_height}"
+            )
+            if robot_type == "franka" and (
+                actual_width != capture_width or actual_height != capture_height
+            ):
+                raise RuntimeError(
+                    "Franka camera must provide 1280 x 720 because the active "
+                    "calibration was recorded at 1280 x 720"
+                )
             
             # Use absolute path for photos directory
             image_path = os.path.join(PHOTOS_DIR, filename)
-            cv2.imwrite(image_path, frame)
-            cap.release()
+            if not cv2.imwrite(image_path, frame):
+                raise RuntimeError(f"Could not save captured image {image_path}")
             
             print(f"SUCCESS: Image captured: {image_path}")
             return image_path
         except Exception as e:
             print(f"ERROR: Camera capture failed: {e}")
             return None
+        finally:
+            if cap is not None:
+                cap.release()
     
     def detect_all_objects(self, image_path, confidence_threshold=0.25):
         """
