@@ -64,7 +64,12 @@ class FrankaAudioWorkflow:
         self.start()
         for method_name in method_list:
             emit_method_execution(method_name, self._output)
-            self._execute_method(method_name)
+            try:
+                self._execute_method(method_name)
+            except Exception as error:
+                raise RuntimeError(
+                    f"Franka method {method_name} failed: {error}"
+                ) from error
 
     def start(self) -> None:
         if self._started:
@@ -278,12 +283,20 @@ class FrankaAudioWorkflow:
         )
 
     def _grip(self) -> None:
+        self._output("FRANKA GRIPPER: Closing around selected object")
         self._arm.grip()
+        self._output("FRANKA GRIPPER: Grasp confirmed")
 
     def _lift(self) -> None:
         point = self._require_selected_point()
         orientation = self._context.selected_orientation or self._config.default_orientation
+        self._output(
+            "FRANKA PICK LIFT: "
+            f"x={point.x:.4f}, y={point.y:.4f}, "
+            f"z={self._config.lift_height:.4f}"
+        )
         self._move_cartesian(point.x, point.y, self._config.lift_height, orientation)
+        self._output("FRANKA PICK LIFT: Completed")
 
     def _move_intermediate(self) -> None:
         self._arm.move_joints(self._config.intermediate_joints)
