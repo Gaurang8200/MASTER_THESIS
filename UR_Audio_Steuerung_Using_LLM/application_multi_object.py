@@ -227,6 +227,9 @@ def capture_and_detect_objects():
    output_text.delete("1.0", tk.END)
    output_text.insert(tk.END, "DETECTION: Starting object detection...\n")
 
+   previous_robot_type = os.environ.get("ROBOT_TYPE")
+   os.environ["ROBOT_TYPE"] = robot_type.get()
+
    try:
        if exec_mode.get() == "simulate":
            # Set environment variable for simulation mode
@@ -337,6 +340,10 @@ def capture_and_detect_objects():
        # Clean up environment variable
        if 'DETECTION_MODE' in os.environ:
            del os.environ['DETECTION_MODE']
+       if previous_robot_type is None:
+           os.environ.pop("ROBOT_TYPE", None)
+       else:
+           os.environ["ROBOT_TYPE"] = previous_robot_type
 
 def callback(recognizer, audio):
    global last_audio
