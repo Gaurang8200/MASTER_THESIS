@@ -1,68 +1,71 @@
 # Gesture selection system
 
-Runtime gesture pipeline for the robot cell. The operator switches a selection
-mode on, points at a segmented object to select it, and points at a free spot on
-the table to define a place position. The result is structured JSON.
+This folder contains only the gesture perception service used by the multimodal speech and robot application.
 
-The model is trained outside this repository on Ultralytics HUB. This code only
-loads the finished checkpoint.
+## Runtime connection
 
-```
-gesture_selection_system/
-├── common/     gesture classes, device selection, path helpers
-├── models/     best.pt goes here, downloaded from Ultralytics HUB
-└── pipeline/   detection, object selection, place point, robot handoff
+```text
+UR_Audio_Steuerung_Using_LLM/application_multi_object.py
+                    ↓
+UR_Audio_Steuerung_Using_LLM/src/multimodal/gesture_client.py
+                    ↓
+pipeline/run/speech_selection_service.py
 ```
 
-| class id | name             | role                                     |
-| -------- | ---------------- | ---------------------------------------- |
-| 0        | open_palm_start  | turns the standalone selection mode on   |
-| 1        | pointing_finger  | confirms that the hand is pointing       |
-| 2        | index_fingertip  | carries the point used for the selection |
+The service starts the camera, detects the pointing finger and fingertip, detects live object boxes, and returns one structured result to the voice application.
 
-The same model covers bare hands and gloved hands. Glove support comes from the
-training data, the runtime has no separate glove path.
+## Folder structure
 
-The standalone gesture pipeline uses five second holds. The speech integration
-uses a three second pointing hold because starting audio activates its session.
+```text
+gesture_selection_system
+│
+├── models
+│   └── handgestureyolov8m960100.pt
+│
+└── pipeline
+    ├── configs
+    │   └── gesture_config.yaml
+    ├── detection
+    │   ├── gesture_detector.py
+    │   └── object_detector.py
+    ├── logic
+    │   └── fingertip_selection.py
+    ├── run
+    │   └── speech_selection_service.py
+    └── support
+        ├── camera.py
+        ├── config.py
+        ├── gesture_classes.py
+        ├── schemas.py
+        └── visualization.py
+```
 
-`common/gesture_classes.py` holds the class order. The pipeline checks the
-downloaded checkpoint against it on load and refuses a mismatch.
+## Responsibilities
 
-## Steps
+| Part | Responsibility |
+| --- | --- |
+| Gesture detector | Detects pointing finger and fingertip classes |
+| Object detector | Loads the existing YOLOv5 object model and returns live boxes |
+| Fingertip selection | Checks whether the fingertip centre is inside a detected object box |
+| Camera | Opens the configured camera and maps rotated preview coordinates back to sensor coordinates |
+| Speech selection service | Owns one gesture session and writes the final JSON result |
 
-1. Record videos, extract frames, label them in CVAT, export the YOLO dataset,
-   train the gesture detector on Ultralytics HUB and download the checkpoint.
-2. Copy `best.pt` into `models/`.
-3. Run the pipeline.
+## Calibration ownership
+
+This folder does not own robot calibration and does not convert pixels into robot coordinates.
+
+The fingertip and object boxes are compared in image coordinates. Robot coordinate conversion remains in `UR_Audio_Steuerung_Using_LLM` so that Universal Robot and Franka continue using their existing calibration paths.
+
+## Configuration
+
+Runtime values are stored in `pipeline/configs/gesture_config.yaml`.
+
+The active camera resolution is 1280 by 720. The gesture model uses an inference image size of 960. The object model uses an inference image size of 640. These model image sizes do not replace the camera coordinate system returned in the result.
+
+## Main application
+
+Run the complete multimodal workflow from the voice application folder.
 
 ```bash
-cd pipeline
-python run/main_pipeline.py
+python -m application_multi_object
 ```
-
-## Where calibration is used
-
-This system does not perform and does not require its own camera calibration.
-
-| step                            | coordinates | calibration |
-| ------------------------------- | ----------- | ----------- |
-| open palm detection             | image       | no          |
-| closed palm detection           | image       | no          |
-| pointing finger detection       | image       | no          |
-| index fingertip detection       | image       | no          |
-| fingertip inside object mask    | image       | no          |
-| place pixel to robot place pose | robot base  | yes         |
-
-The fingertip point and the object masks live in the same image, so object
-selection is a pure image space decision. Calibration appears in exactly one
-step and is delegated to the existing pick and drop repository.
-
-## Install
-
-```bash
-pip install ultralytics opencv-python numpy pydantic pyyaml
-```
-
-See `pipeline/README.md` for the interaction rules, the JSON contract and the
-integration points.

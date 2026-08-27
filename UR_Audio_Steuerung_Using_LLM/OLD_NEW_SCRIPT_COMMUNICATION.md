@@ -42,11 +42,11 @@ The system does not use one single communication method.
 
 ## Type 1 copied robot logic
 
-The old `Application.py` is not executed by the normal current workflow. Its main robot functions were copied and extended inside `src/robot_control.py`.
+The old `NU_Application.py` is not executed by the normal current workflow. Its main robot functions were copied and extended inside `src/robot_control.py`.
 
 ```mermaid
 flowchart LR
-    subgraph OldApplication["Old Application.py"]
+    subgraph OldApplication["Old NU_Application.py"]
         OldSend["send_urscript"]
         OldMove["movement generators"]
         OldMain["move_to_main_position"]
@@ -83,7 +83,7 @@ flowchart LR
 
 There is no live connection between these copied functions.
 
-If `move_to_main_position` changes inside old `Application.py`, the new `robot_control.py` does not change automatically.
+If `move_to_main_position` changes inside old `NU_Application.py`, the new `robot_control.py` does not change automatically.
 
 The current robot uses the copy inside `src/robot_control.py`.
 
@@ -127,9 +127,9 @@ flowchart LR
     NewRobot["src/robot_control.py"]
 
     OldMultiDetection["detection_multi.py"]
-    OldDetection["detection.py"]
-    OldPixel["pixel2robot.py"]
-    OldPixelMulti["pixel2robot_multi.py"]
+    OldDetection["UR_detection.py"]
+    OldPixel["UR_pixel2robot.py"]
+    OldPixelMulti["UR_pixel2robot_multi.py"]
     OldPrecision["detection_multi_precision_run.py"]
     OldPCA["pca_multi.py"]
     OldDirection["direction_multi.py"]
@@ -180,7 +180,7 @@ import pixel2robot_multi
 x_robot, y_robot = pixel2robot_multi.convert_coordinates(pixel_x, pixel_y)
 ```
 
-If the direct import fails, it starts `pixel2robot_multi.py` as a subprocess with the two pixel values.
+If the direct import fails, it starts `UR_pixel2robot_multi.py` as a subprocess with the two pixel values.
 
 ## Complete current precision flow
 
@@ -201,11 +201,11 @@ sequenceDiagram
     Selector-->>App: Precision method list
     App->>Robot: Execute method list
     Robot->>UR: Move to main position
-    Robot->>Old: Run detection.py
+    Robot->>Old: Run UR_detection.py
     Old-->>Robot: Write center_point.txt
-    Robot->>Old: Run pixel2robot.py
+    Robot->>Old: Run UR_pixel2robot.py
     Old-->>Robot: Write robot_coordinates.txt
-    Robot->>Old: Convert selected object with pixel2robot_multi.py
+    Robot->>Old: Convert selected object with UR_pixel2robot_multi.py
     Old-->>Robot: Update robot_coordinates.txt
     Robot->>UR: Move camera above selected object
     Robot->>Old: Run detection_multi_precision_run.py
@@ -232,7 +232,7 @@ flowchart TD
     Selection["selection_data.json"]
     NewRobot["robot_control.py"]
     ObjectCenter["center_point_object_ID.txt"]
-    PixelMulti["pixel2robot_multi.py"]
+    PixelMulti["UR_pixel2robot_multi.py"]
     RobotCoordinates["robot_coordinates.txt"]
     Precision["detection_multi_precision_run.py"]
     FinalCenter["final_object_center_point.txt"]
@@ -279,7 +279,7 @@ The communication is:
 3. The new application selects Marker index `1`
 4. The new application writes the selected object identity into `selection_data.json`
 5. `robot_control.py` reads its pixel center, for example `1530, 696`
-6. `pixel2robot_multi.py` converts that pixel into robot coordinates
+6. `UR_pixel2robot_multi.py` converts that pixel into robot coordinates
 7. It writes values such as `x 0.375` and `y minus 0.055` into `robot_coordinates.txt`
 8. `robot_control.py` reads those values and moves the camera above the Marker
 9. `detection_multi_precision_run.py` detects the object again at close range
@@ -288,38 +288,25 @@ The communication is:
 12. `zone_coordinates.py` supplies Zone 2 values
 13. The final robot target becomes `x 0.366`, `y minus 0.008`, and Marker height `z 0.040`
 
-## Type 3 old files not used by the normal precision flow
+## Remaining compatibility files
 
 ```mermaid
 flowchart TD
     OldFiles["Old folder files"]
-    NotCurrent["Not used by normal current precision workflow"]
     Compatibility["Available only for compatibility"]
-    Training["Used only for model training or research"]
-    Support["Documentation, setup, and experiments"]
+    Reference["Kept as predecessor reference"]
 
-    OldFiles --> NotCurrent
     OldFiles --> Compatibility
-    OldFiles --> Training
-    OldFiles --> Support
+    OldFiles --> Reference
 
-    NotCurrent --> OldApplication["Application.py"]
-    NotCurrent --> OldApp["App.py"]
-    NotCurrent --> SendTest["send_script.py"]
-    NotCurrent --> BorderExperiment["border.py and border_multi.py"]
-
-    Compatibility --> OldPCA["pca.py"]
-    Compatibility --> OldDirection["direction.py"]
+    Compatibility --> OldPCA["UR_pca.py"]
+    Compatibility --> OldDirection["UR_direction.py"]
     Compatibility --> LegacyWorkflow["legacy workflow functions"]
-
-    Training --> TrainingPackage["ObjectDetection package"]
-    Training --> Trainer["model training pipeline"]
-
-    Support --> Setup["setup.py and template.py"]
-    Support --> Notes["README, Pose notes, and test scripts"]
+    Reference --> OldApplication["NU_Application.py"]
+    Reference --> BorderExperiment["NU_border.py and NU_border_multi.py"]
 ```
 
-### Old `Application.py`
+### Old `NU_Application.py`
 
 The current entry point does not run or import this file.
 
@@ -327,21 +314,13 @@ Its movement logic was copied and extended inside `src/robot_control.py`.
 
 The file remains useful as a predecessor reference. It becomes active only if somebody runs it manually.
 
-### Old `pca.py` and `direction.py`
+### Old `UR_pca.py` and `UR_direction.py`
 
 The current precision workflow uses `pca_multi.py` and `direction_multi.py`.
 
 The single object versions remain callable through compatibility functions but are not selected by the normal precision method list.
 
-### Old training package
-
-The `ObjectDetection` package is not part of normal robot execution.
-
-It is relevant only when downloading, validating, or training a YOLO model.
-
-### Old experiment and setup files
-
-Files such as `App.py`, `send_script.py`, `border.py`, `setup.py`, and `template.py` are not required for the normal speech controlled precision workflow.
+The unrelated model training package, scaffolding scripts, diagnostic scripts, and standalone gesture runner were removed during folder cleanup. They were not called by the multimodal application.
 
 ## Current ownership summary
 
@@ -354,7 +333,7 @@ flowchart LR
     NewZones["New zone_coordinates.py"]
     OldVision["Old folder vision scripts"]
     OldCalibration["Old folder calibration scripts and data"]
-    OldApplication["Old Application.py"]
+    OldApplication["Old NU_Application.py"]
 
     NewApp --> NewSpeech
     NewApp --> NewSelector
@@ -377,4 +356,4 @@ Robot controller
 src/robot_control.py
 ```
 
-The old folder remains active for vision and calibration, but the old `Application.py` is no longer the current controller.
+The old folder remains active for vision and calibration, but the old `NU_Application.py` is no longer the current controller.
