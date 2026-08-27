@@ -1,7 +1,7 @@
 # MO_Changes
 from __future__ import annotations
 
-from src.franka import prepare_franka_for_detection
+from src.FR_franka import prepare_franka_for_detection
 from src.robot_control import move_to_main_position
 
 

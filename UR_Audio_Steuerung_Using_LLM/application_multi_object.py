@@ -721,7 +721,7 @@ def _transform_destination_point(gesture_result):
        raise ValueError("Destination camera size is missing")
    pixel_x, pixel_y = float(fingertip[0]), float(fingertip[1])
    if robot_type.get() == "franka":
-       from src.franka import transform_franka_pixel_to_robot
+       from src.FR_franka import transform_franka_pixel_to_robot
 
        point = transform_franka_pixel_to_robot(
            pixel_x,
@@ -901,7 +901,7 @@ def execute_workflow_handler():
             try:
                 output_text.insert("end", "ROBOT REAL: Starting robot workflow...\n")
                 if robot_type.get() == "franka":
-                    from src.franka import (
+                    from src.FR_franka import (
                         create_franka_workflow_session,
                         execute_franka_workflow,
                     )
@@ -961,7 +961,7 @@ def execute_workflow_handler():
             try:
                 output_text.insert("end", "SIMULATION: Starting workflow simulation...\n")
                 if robot_type.get() == "franka":
-                    from src.franka import (
+                    from src.FR_franka import (
                         create_franka_workflow_session,
                         execute_franka_workflow,
                     )
@@ -1044,7 +1044,7 @@ def write_object_data_for_robot(selected_obj):
         
         print(f"DEBUG: Writing center coordinates: ({center_x}, {center_y})")
         
-        # Legacy single-object files (for pixel2robot.py compatibility)
+        # Legacy single-object files (for UR_pixel2robot.py compatibility)
         center_point_path = os.path.join(txt_dir, "center_point.txt")
         with open(center_point_path, 'w') as f:
             f.write(f"{center_x},{center_y}\n")
@@ -1129,7 +1129,7 @@ def write_object_data_for_robot(selected_obj):
         print(f"   - Class: {class_id} ({selected_obj['class_name']})")
         print(f"   - Confidence: {confidence:.3f}")
         print(f"   - Object ID: {selected_obj['id']}")
-        print(f"   - Legacy files created for pixel2robot.py compatibility")
+        print(f"   - Legacy files created for UR_pixel2robot.py compatibility")
         
         return True
         
@@ -1143,12 +1143,12 @@ def execute_complete_object_pipeline(command_info, output_text):
     """
     Execute the complete object processing pipeline using HYBRID APPROACH:
     - Direct imports for simple calculations (pixel2robot, pca, direction)
-    - Subprocess for YOLOv5-specific scripts (detection.py) with correct venv
+    - Subprocess for YOLOv5-specific scripts (UR_detection.py) with correct venv
     
-    Pipeline steps (1:1 from Application.py):
+    Pipeline steps (1:1 from NU_Application.py):
     1. Select target object from speech command
     2. Write object data to legacy txt files
-    3. Run detection.py (legacy detection) - SUBPROCESS with work venv
+    3. Run UR_detection.py (legacy detection) - SUBPROCESS with work venv
     4. Convert pixel coordinates to robot coordinates - DIRECT IMPORT
     5. Execute PCA calculation - DIRECT IMPORT
     6. Execute direction calculation - DIRECT IMPORT
@@ -1174,8 +1174,8 @@ def execute_complete_object_pipeline(command_info, output_text):
         write_object_data_for_robot(selected_obj)
         print(" STEP 2/6: Object data written to legacy txt files")
         
-        # STEP 3: Run legacy detection.py - SUBPROCESS with correct venv
-        print("STEP 3/6: Running legacy detection.py (predecessor script) - SUBPROCESS with work venv...")
+        # STEP 3: Run legacy UR_detection.py - SUBPROCESS with correct venv
+        print("STEP 3/6: Running legacy UR_detection.py (predecessor script) - SUBPROCESS with work venv...")
         success = run_legacy_detection_subprocess()
         if not success:
             print(" STEP 3/6: Legacy detection failed")
@@ -1225,7 +1225,7 @@ def execute_complete_object_pipeline(command_info, output_text):
 
 def run_legacy_detection_subprocess():
     """
-    Run legacy detection.py using subprocess with the correct virtual environment (work)
+    Run legacy UR_detection.py using subprocess with the correct virtual environment (work)
     This avoids the cv2 import issue by using the YOLOv5 environment
     """
     try:
@@ -1239,16 +1239,16 @@ def run_legacy_detection_subprocess():
             work_venv_python = 'python'  # Use system python as fallback
         
         # Legacy detection script path
-        detection_script = os.path.join(PRE, 'detection.py')
+        detection_script = os.path.join(PRE, 'UR_detection.py')
         
         # Change to the predecessor directory for execution
         original_cwd = os.getcwd()
         os.chdir(PRE)
         
         try:
-            # Run detection.py with proper encoding and timeout
+            # Run UR_detection.py with proper encoding and timeout
             result = subprocess.run(
-                [work_venv_python, 'detection.py'],
+                [work_venv_python, 'UR_detection.py'],
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
@@ -1257,10 +1257,10 @@ def run_legacy_detection_subprocess():
             )
             
             if result.returncode == 0:
-                print("DEBUG: Legacy detection.py completed successfully")
+                print("DEBUG: Legacy UR_detection.py completed successfully")
                 return True
             else:
-                print(f"DEBUG: Legacy detection.py failed with return code: {result.returncode}")
+                print(f"DEBUG: Legacy UR_detection.py failed with return code: {result.returncode}")
                 print(f"STDERR: {result.stderr}")
                 return False
                 
@@ -1269,10 +1269,10 @@ def run_legacy_detection_subprocess():
             os.chdir(original_cwd)
             
     except subprocess.TimeoutExpired:
-        print("DEBUG: Legacy detection.py timed out")
+        print("DEBUG: Legacy UR_detection.py timed out")
         return False
     except Exception as e:
-        print(f"DEBUG: Legacy detection.py error: {e}")
+        print(f"DEBUG: Legacy UR_detection.py error: {e}")
         return False
 
 
@@ -1286,9 +1286,9 @@ def run_pixel2robot_direct():
         sys.path.insert(0, PRE)
         
         # Try to import and execute the main functionality
-        import pixel2robot
+        import UR_pixel2robot as pixel2robot
         
-        # The pixel2robot.py script should process the txt files automatically
+        # The UR_pixel2robot.py script should process the txt files automatically
         # Just importing it should trigger the calculation
         print("DEBUG: pixel2robot calculation completed")
         return True
@@ -1296,7 +1296,7 @@ def run_pixel2robot_direct():
     except Exception as e:
         print(f"DEBUG: pixel2robot direct import failed: {e}")
         # Fallback to subprocess if direct import fails
-        return run_script_subprocess('pixel2robot.py')
+        return run_script_subprocess('UR_pixel2robot.py')
 
 
 def run_pca_direct():
@@ -1315,7 +1315,7 @@ def run_pca_direct():
     except Exception as e:
         print(f"DEBUG: PCA direct import failed: {e}")
         # Fallback to subprocess if direct import fails
-        return run_script_subprocess('pca.py')
+        return run_script_subprocess('UR_pca.py')
 
 
 def run_direction_direct():
@@ -1334,7 +1334,7 @@ def run_direction_direct():
     except Exception as e:
         print(f"DEBUG: Direction direct import failed: {e}")
         # Fallback to subprocess if direct import fails
-        return run_script_subprocess('direction.py')
+        return run_script_subprocess('UR_direction.py')
 
 
 def run_script_subprocess(script_name):

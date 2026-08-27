@@ -78,7 +78,7 @@ class MultiObjectTracker:
     
     def convert_origin_for_robot(self, origin):
         """
-        Convert pixel coordinates to robot coordinate space - SAME AS detection.py
+        Convert pixel coordinates to robot coordinate space - SAME AS UR_detection.py
         Args:
             origin: tuple/list of (x, y) pixel coordinates
         Returns:

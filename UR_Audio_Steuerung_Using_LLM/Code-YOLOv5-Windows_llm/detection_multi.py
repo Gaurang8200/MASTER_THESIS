@@ -323,7 +323,7 @@ class MultiObjectDetector:
     def _execute_additional_processing(self):
         """
         Execute additional image processing steps that were missing in multi-object system:
-        - Border detection (border_multi.py) → border_1.jpg
+        - Border detection (NU_border_multi.py) → border_1.jpg
         - Direction calculation (direction_multi.py) → direction_1.jpg  
         - PCA calculation (pca_multi.py) → pca_1.jpg
         """
@@ -340,7 +340,7 @@ class MultiObjectDetector:
             # Step 1: Border detection
             print("STEP 1/3: Border detection...")
             try:
-                result = subprocess.run([PYTHON_EXE, 'border_multi.py'], 
+                result = subprocess.run([PYTHON_EXE, 'NU_border_multi.py'], 
                                       capture_output=True, text=True, timeout=60,
                                       encoding='utf-8', errors='ignore')
                 if result.returncode == 0:
@@ -493,7 +493,7 @@ class MultiObjectDetector:
     
     def convert_origin_for_robot(self, origin):
         """
-        Convert pixel coordinates to robot coordinate space - EXACT SAME AS ORIGINAL detection.py
+        Convert pixel coordinates to robot coordinate space - EXACT SAME AS ORIGINAL UR_detection.py
         Args:
             origin: tuple of (x, y) pixel coordinates
         Returns:
@@ -511,7 +511,7 @@ class MultiObjectDetector:
     def _write_object_data_for_robot(self, selected_obj):
         """
         Write object data in the format expected by the robot control system
-        KORRIGIERTE VERSION - now identical to original detection.py workflow
+        KORRIGIERTE VERSION - now identical to original UR_detection.py workflow
         Creates both new JSON format and legacy txt files for compatibility
         """
         try:
@@ -535,7 +535,7 @@ class MultiObjectDetector:
             print(f"DEBUG: Final robot center coordinates: ({center_x}, {center_y})")
             
             # 3. Write center point data in CORRECT FORMAT (space-separated, no newline)
-            # Legacy single-object files (for pixel2robot.py compatibility)
+            # Legacy single-object files (for UR_pixel2robot.py compatibility)
             center_point_path = os.path.join(txt_dir, "center_point.txt")
             with open(center_point_path, 'w') as f:
                 f.write(f"{center_x} {center_y}")  # Space-separated, no newline - EXACT SAME AS ORIGINAL
@@ -590,7 +590,7 @@ class MultiObjectDetector:
             print(f"   - Bbox: {bbox}")
             print(f"   - Class: {class_id} ({selected_obj['class_name']})")
             print(f"   - Confidence: {confidence:.3f}")
-            print(f"   - Legacy files created for pixel2robot.py compatibility")
+            print(f"   - Legacy files created for UR_pixel2robot.py compatibility")
             print(f"   - FIXED: Now uses robot coordinates and correct file format!")
             
         except Exception as e:

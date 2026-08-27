@@ -40,7 +40,7 @@ flowchart TD
     Verification["Verification object detection"]
     RobotChoice{"Selected robot"}
     URControl["robot_control.py<br/>Universal Robot execution"]
-    FrankaControl["src/franka/workflow.py<br/>Franka execution"]
+    FrankaControl["src/FR_franka/FR_workflow.py<br/>Franka execution"]
     LegacyVision["Code-YOLOv5-Windows_llm<br/>precision detection and calibration"]
     URRobot["Universal Robot<br/>URScript and vacuum tool"]
     FrankaRobot["Franka<br/>franky and gripper"]
@@ -290,7 +290,7 @@ The second detection happens after the robot has moved closer to the selected ob
 flowchart LR
     Detection["YOLO detection"]
     Center["center_point.txt<br/>image pixel"]
-    Calibration["pixel2robot_multi.py<br/>camera calibration"]
+    Calibration["UR_pixel2robot_multi.py<br/>camera calibration"]
     Coordinates["robot_coordinates.txt<br/>robot x and y"]
     Selection["selection_data.json<br/>selected object identity"]
     Move["move_to_selected_object"]
@@ -429,7 +429,7 @@ This prints interaction messages and speaks them through the operating system sp
 
 This is the robot execution layer. It contains simulation behavior, URScript generation, socket communication, robot feedback reads, vacuum control, movement functions, precision detection calls, coordinate conversion, object orientation, method dispatch, and complete workflow execution.
 
-### `src/franka/workflow.py`
+### `src/FR_franka/FR_workflow.py`
 
 This maps the same ordered robot methods to Franka motions. It keeps one Franka connection open while the object is held at the intermediate position and uses the original Franka calibration for a pointed destination.
 
@@ -445,7 +445,7 @@ Its most important integration scripts are:
 
 1. `detection_multi.py` detects all visible objects
 2. `detection_multi_precision_run.py` performs the closer second detection
-3. `pixel2robot_multi.py` converts selected pixels into robot coordinates
+3. `UR_pixel2robot_multi.py` converts selected pixels into robot coordinates
 4. `pca_multi.py` estimates object geometry
 5. `direction_multi.py` calculates the picking orientation
 6. `function_pool.py` contains camera and robot calibration mathematics

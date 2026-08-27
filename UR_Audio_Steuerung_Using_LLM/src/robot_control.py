@@ -35,7 +35,7 @@ def transform_ur_pixel_to_robot(pixel_x, pixel_y):
     previous_directory = os.getcwd()
     os.chdir(PREDECESSOR_DIR)
     try:
-        import pixel2robot_multi
+        import UR_pixel2robot_multi as pixel2robot_multi
 
         x_robot, y_robot, _ = pixel2robot_multi.pixel2robot(pixel_x, pixel_y)
         return float(x_robot), float(y_robot)
@@ -603,7 +603,7 @@ def final_position(robot_ip):
 def move_to_selected_object(robot_ip):
     """
     Bewegt Roboter zu dem in selection_data.json ausgewählten Objekt
-    Verwendet pixel2robot_multi.py (nicht das alte pixel2robot.py)
+    Verwendet UR_pixel2robot_multi.py (nicht das alte UR_pixel2robot.py)
     LOGIK: Identisch mit Vorgänger move_to_object(), aber verwendet spezifische Objekt-Koordinaten
     
     Args:
@@ -650,7 +650,7 @@ def move_to_selected_object(robot_ip):
         else:
             print(f"[DEBUG] move_to_selected_object → pixel coords: ({pixel_x}, {pixel_y})")
         
-        # 3. Konvertiere mit pixel2robot_multi.py (GLEICHE Logik wie Vorgänger convert_pixel_to_robot)
+        # 3. Konvertiere mit UR_pixel2robot_multi.py (GLEICHE Logik wie Vorgänger convert_pixel_to_robot)
         success = convert_pixel_to_robot_multi(pixel_x, pixel_y)
         if not success:
             raise RuntimeError("Pixel-zu-Robot-Koordinatenkonvertierung fehlgeschlagen")
@@ -713,13 +713,13 @@ def move_to_selected_object(robot_ip):
 
 def convert_pixel_to_robot_multi(pixel_x, pixel_y):
     """
-    Konvertiert Pixel-Koordinaten mit pixel2robot_multi.py 
+    Konvertiert Pixel-Koordinaten mit UR_pixel2robot_multi.py
     NEUE LÖSUNG: Kombiniert direkten Import + Kommandozeilen-Parameter (keine temporären Dateien)
     LOGIK: Identisch mit Vorgänger convert_pixel_to_robot(), aber eleganter implementiert
     """
     try:
         if simulation_mode:
-            sim_print(f"CONVERSION: Verwende pixel2robot_multi.py für ({pixel_x}, {pixel_y})")
+            sim_print(f"CONVERSION: Verwende UR_pixel2robot_multi.py für ({pixel_x}, {pixel_y})")
             # Mock-Konvertierung für Simulation
             robot_coords_file = os.path.join(PREDECESSOR_DIR, 'txt_file', 'robot_coordinates.txt')
 
@@ -752,7 +752,7 @@ def convert_pixel_to_robot_multi(pixel_x, pixel_y):
                 # OPTION 1: Direkter Import (schnell, keine temporären Dateien)
                 try:
                     sys.path.insert(0, PREDECESSOR_DIR)
-                    import pixel2robot_multi
+                    import UR_pixel2robot_multi as pixel2robot_multi
                     
                     # Koordinaten direkt konvertieren
                     x_robot, y_robot = pixel2robot_multi.convert_coordinates(pixel_x, pixel_y)
@@ -771,7 +771,7 @@ def convert_pixel_to_robot_multi(pixel_x, pixel_y):
                     print("[DEBUG] convert_pixel_to_robot_multi → using subprocess with parameters")
                     
                     result = subprocess.run(
-                        [PRE_PYTHON, 'pixel2robot_multi.py', str(pixel_x), str(pixel_y)],
+                        [PRE_PYTHON, 'UR_pixel2robot_multi.py', str(pixel_x), str(pixel_y)],
                         capture_output=True, text=True, timeout=30,
                         encoding='utf-8', errors='ignore'
                     )
@@ -780,7 +780,7 @@ def convert_pixel_to_robot_multi(pixel_x, pixel_y):
                         print("[DEBUG] convert_pixel_to_robot_multi → subprocess success")
                         return True
                     else:
-                        print(f"[ERROR] pixel2robot_multi.py subprocess failed: {result.stderr}")
+                        print(f"[ERROR] UR_pixel2robot_multi.py subprocess failed: {result.stderr}")
                         return False
                         
             finally:
@@ -796,16 +796,16 @@ def convert_pixel_to_robot_multi(pixel_x, pixel_y):
 # Detection- und Mapping-Routinen mit Simulation Support
 def detect_object():
     """
-    Run object detection based on current mode - USES LEGACY detection.py
-    This is equivalent to detect_object() in Application.py
+    Run object detection based on current mode - USES LEGACY UR_detection.py
+    This is equivalent to detect_object() in NU_Application.py
     """
     
     if simulation_mode:
-        sim_print("DETECTION SIMULATION: Running LEGACY detection.py on test image...")
+        sim_print("DETECTION SIMULATION: Running LEGACY UR_detection.py on test image...")
         try:
-            # Use subprocess to call LEGACY detection.py with proper environment
+            # Use subprocess to call LEGACY UR_detection.py with proper environment
             base = PREDECESSOR_DIR
-            script = os.path.join(base, 'detection.py')  # LEGACY VERSION
+            script = os.path.join(base, 'UR_detection.py')  # LEGACY VERSION
             
             # Run detection in simulation mode using subprocess
             env = os.environ.copy()
@@ -844,11 +844,11 @@ def detect_object():
         except Exception as e:
             sim_print(f"ERROR SIMULATION: Detection failed: {e}")
     else:
-        print("[DEBUG] detect_object → real mode (LEGACY detection.py)")
+        print("[DEBUG] detect_object → real mode (LEGACY UR_detection.py)")
         try:
-            # Use subprocess to call LEGACY detection.py with proper environment  
+            # Use subprocess to call LEGACY UR_detection.py with proper environment
             base = PREDECESSOR_DIR
-            script = os.path.join(base, 'detection.py')  # LEGACY VERSION
+            script = os.path.join(base, 'UR_detection.py')  # LEGACY VERSION
             
             result = subprocess.run([PRE_PYTHON, script], 
                                   cwd=base,
@@ -885,11 +885,11 @@ def detect_object():
 
 def convert_pixel_to_robot():
     """
-    Run pixel to robot coordinate conversion - USES LEGACY pixel2robot.py
-    This is equivalent to convert_pixel_to_robot() in Application.py
+    Run pixel to robot coordinate conversion - USES LEGACY UR_pixel2robot.py
+    This is equivalent to convert_pixel_to_robot() in NU_Application.py
     """
     base   = PREDECESSOR_DIR
-    script = os.path.join(base, 'pixel2robot.py')  # LEGACY VERSION
+    script = os.path.join(base, 'UR_pixel2robot.py')  # LEGACY VERSION
     
     if simulation_mode:
         sim_print(f"INFO SIMULATION: Converting pixel coordinates to robot coordinates using LEGACY {script}")
@@ -955,11 +955,11 @@ def convert_pixel_to_robot():
 
 def pca_calculation():
     """
-    Run PCA calculation - USES LEGACY pca.py 
-    This is equivalent to pca_calculation() in Application.py
+    Run PCA calculation - USES LEGACY UR_pca.py
+    This is equivalent to pca_calculation() in NU_Application.py
     """
     base   = PREDECESSOR_DIR
-    script = os.path.join(base, 'pca.py')  # LEGACY VERSION (not pca_multi.py)
+    script = os.path.join(base, 'UR_pca.py')  # LEGACY VERSION (not pca_multi.py)
     
     if simulation_mode:
         sim_print(f"INFO SIMULATION: Running LEGACY PCA analysis: {script}")
@@ -974,11 +974,11 @@ def pca_calculation():
 
 def direction_object():
     """
-    Run direction calculation - USES LEGACY direction.py
-    This is equivalent to direction_object() in Application.py  
+    Run direction calculation - USES LEGACY UR_direction.py
+    This is equivalent to direction_object() in NU_Application.py
     """
     base   = PREDECESSOR_DIR
-    script = os.path.join(base, 'direction.py')  # LEGACY VERSION (not direction_multi.py)
+    script = os.path.join(base, 'UR_direction.py')  # LEGACY VERSION (not direction_multi.py)
     
     if simulation_mode:
         sim_print(f"DIRECTION SIMULATION: Calculating approach direction with LEGACY: {script}")
@@ -1330,11 +1330,11 @@ def execute_robot_method(method_name, robot_ip):
     if method_name.startswith("execute_legacy_workflow_"):
         target_zone = method_name.replace("execute_legacy_workflow_", "")
         if simulation_mode:
-            sim_print(f"LEGACY WORKFLOW: Starting complete Application.py workflow for {target_zone}")
+            sim_print(f"LEGACY WORKFLOW: Starting complete NU_Application.py workflow for {target_zone}")
         else:
             print(f"[DEBUG] execute_legacy_workflow → target_zone={target_zone}")
         
-        # Execute the complete legacy workflow (equivalent to entire Application.py main loop)
+        # Execute the complete legacy workflow (equivalent to entire NU_Application.py main loop)
         return execute_legacy_robot_workflow(robot_ip, target_zone)
     
     # NEW: PRECISION METHODS WITH OBJECT FILTERING
@@ -1509,7 +1509,7 @@ def execute_robot_workflow_simulation(
     
     # Check if we're using the new legacy workflow system
     if len(method_list) == 1 and method_list[0].startswith("execute_legacy_workflow_"):
-        sim_print("WORKFLOW: Using NEW LEGACY WORKFLOW SYSTEM (Application.py equivalent)")
+        sim_print("WORKFLOW: Using NEW LEGACY WORKFLOW SYSTEM (NU_Application.py equivalent)")
         target_zone = method_list[0].replace("execute_legacy_workflow_", "")
         sim_print(f"WORKFLOW: Target zone: {target_zone}")
         
@@ -1709,8 +1709,8 @@ def execute_robot_workflow(robot_ip, method_list, return_home=True):
 
 def execute_legacy_robot_workflow(robot_ip, target_zone="Zone_1"):
     """
-    Execute the EXACT robot workflow from Application.py
-    This replicates the while loop from Application.py step by step
+    Execute the EXACT robot workflow from NU_Application.py
+    This replicates the while loop from NU_Application.py step by step
     
     Args:
         robot_ip: IP address of the robot
@@ -1720,24 +1720,24 @@ def execute_legacy_robot_workflow(robot_ip, target_zone="Zone_1"):
     global x_place, y_place, z_place
     
     if simulation_mode:
-        sim_print("LEGACY WORKFLOW: Starting EXACT Application.py workflow...")
+        sim_print("LEGACY WORKFLOW: Starting EXACT NU_Application.py workflow...")
         sim_print(f"LEGACY: Target robot IP: {robot_ip}")
         sim_print(f"LEGACY: Target zone: {target_zone}")
     else:
         print(f"[DEBUG] execute_legacy_robot_workflow → robot_ip={robot_ip}, target_zone={target_zone}")
     
     try:
-        # Step 1: Move to main position (same as Application.py)
+        # Step 1: Move to main position (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 1: move_to_main_position")
         move_to_main_position(robot_ip)
         
-        # Step 2: Detect object (same as Application.py)
+        # Step 2: Detect object (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 2: detect_object")
         detect_object()
         
-        # Step 3: Check if object found (same as Application.py)
+        # Step 3: Check if object found (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 3: Checking if object found in label.txt")
         file_path = os.path.join(PREDECESSOR_DIR, 'txt_file', 'label.txt')
@@ -1750,22 +1750,22 @@ def execute_legacy_robot_workflow(robot_ip, target_zone="Zone_1"):
                     print("Object has not been found")
                 return False
         
-        # Step 4: Convert pixel to robot coordinates (same as Application.py)
+        # Step 4: Convert pixel to robot coordinates (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 4: convert_pixel_to_robot")
         convert_pixel_to_robot()
         
-        # Step 5: Move to object (same as Application.py)
+        # Step 5: Move to object (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 5: move_to_object")
         move_to_object(robot_ip)
         
-        # Step 6: Detect object again (same as Application.py)
+        # Step 6: Detect object again (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 6: detect_object (second time)")
         detect_object()
         
-        # Step 7: Read object type and set coordinates (same as Application.py)
+        # Step 7: Read object type and set coordinates (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 7: Reading object type and setting pick/place coordinates")
         with open(file_path, 'r') as file:
@@ -1798,73 +1798,73 @@ def execute_legacy_robot_workflow(robot_ip, target_zone="Zone_1"):
         else:
             print(f"[DEBUG] Legacy workflow → object_type={object_type}, z_pick={z_pick}, z_place={z_place}")
         
-        # Step 8: PCA calculation (same as Application.py)
+        # Step 8: PCA calculation (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 8: pca_calculation")
         pca_calculation()
         
-        # Step 9: Direction calculation (same as Application.py)
+        # Step 9: Direction calculation (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 9: direction_object")
         direction_object()
         
-        # Step 10: Pick the object (same as Application.py)
+        # Step 10: Pick the object (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 10: pick_the_object")
         pick_the_object(robot_ip)
         
-        # Step 11: Turn on suction (same as Application.py)
+        # Step 11: Turn on suction (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 11: suction_on")
         suction_on(robot_ip)
         
-        # Step 12: Wait (same as Application.py)
+        # Step 12: Wait (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 12: time.sleep(3)")
         time.sleep(3)
         
-        # Step 13: Pick up object (same as Application.py)
+        # Step 13: Pick up object (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 13: pick_up_object")
         pick_up_object(robot_ip)
         
-        # Step 14: Move to intermediate position (same as Application.py)
+        # Step 14: Move to intermediate position (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 14: intermediate_position")
         intermediate_position(robot_ip)
         
-        # Step 15: Move to final position (same as Application.py)
+        # Step 15: Move to final position (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 15: final_position")
         final_position(robot_ip)
         
-        # Step 16: Turn off suction (same as Application.py)
+        # Step 16: Turn off suction (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 16: suction_off")
         suction_off(robot_ip)
         
-        # Step 17: Wait (same as Application.py)
+        # Step 17: Wait (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 17: time.sleep(3)")
         time.sleep(3)
         
-        # Step 18: Move to intermediate position (same as Application.py)
+        # Step 18: Move to intermediate position (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 18: intermediate_position")
         intermediate_position(robot_ip)
         
-        # Step 19: Move to main position (same as Application.py)
+        # Step 19: Move to main position (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 19: move_to_main_position")
         move_to_main_position(robot_ip)
         
-        # Step 20: Delete txt files (same as Application.py)
+        # Step 20: Delete txt files (same as NU_Application.py)
         if simulation_mode:
             sim_print("LEGACY STEP 20: delet_txt_file")
         delet_txt_file()
         
         if simulation_mode:
-            sim_print("SUCCESS LEGACY: EXACT Application.py workflow completed successfully!")
+            sim_print("SUCCESS LEGACY: EXACT NU_Application.py workflow completed successfully!")
         else:
             print("SUCCESS: Legacy robot workflow completed successfully!")
         

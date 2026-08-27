@@ -279,12 +279,12 @@ def select_robot_methods_multi(info: dict, use_precision=False) -> list:
         return []
     
     # Return LEGACY WORKFLOW METHOD (replaces all individual methods)
-    # This will call execute_legacy_robot_workflow() which replicates Application.py exactly
+    # This will call execute_legacy_robot_workflow() which replicates NU_Application.py exactly
     legacy_method = f"execute_legacy_workflow_{target_location}"
     
-    print(f"INFO: Using LEGACY WORKFLOW from Application.py")
+    print(f"INFO: Using LEGACY WORKFLOW from NU_Application.py")
     print(f"INFO: Single method: {legacy_method}")
-    print(f"INFO: This replicates the exact Application.py workflow for {target_location}")
+    print(f"INFO: This replicates the exact NU_Application.py workflow for {target_location}")
     
     return [legacy_method]
 
