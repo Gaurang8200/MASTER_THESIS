@@ -179,6 +179,10 @@ def resolve_multimodal_selection(
     ]
     if not candidates:
         return MultimodalResolution(True, False, "object_not_in_detection_list")
+    if len(candidates) == 1:
+        return MultimodalResolution(
+            True, True, "gesture_object_matched", candidates[0], 0
+        )
     overview_size = _frame_size_from_detection(detection_data)
     live_width = gesture_result.get("frame_width")
     live_height = gesture_result.get("frame_height")
