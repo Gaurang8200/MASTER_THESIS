@@ -9,9 +9,18 @@ and on keyboard interrupt.
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+AUDIO_PROJECT_ROOT = REPOSITORY_ROOT / "UR_Audio_Steuerung_Using_LLM"
+if str(AUDIO_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
+
+from src.camera_devices import RgbCameraStream
 
 from config import CameraConfig
 
@@ -23,43 +32,31 @@ class CameraStream:
 
     def __init__(self, config: CameraConfig) -> None:
         self._config = config
-        self._capture: cv2.VideoCapture | None = None
+        self._capture: RgbCameraStream | None = None
         self._consecutive_failures = 0
 
     @property
     def is_open(self) -> bool:
-        return self._capture is not None and self._capture.isOpened()
+        return self._capture is not None and self._capture.is_open
 
     def start(self) -> None:
         if self.is_open:
             return
-        capture = cv2.VideoCapture(self._config.index)
-        if not capture.isOpened():
-            capture.release()
-            raise RuntimeError(
-                f"could not open camera index {self._config.index}. "
-                "Check that no other application holds the device."
-            )
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self._config.width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self._config.height)
+        capture = RgbCameraStream(self._config.width, self._config.height)
+        capture.start()
         self._capture = capture
-        actual_w = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         LOGGER.info(
-            "camera_opened index=%d requested=%dx%d actual=%dx%d",
-            self._config.index,
+            "camera_opened requested=%dx%d",
             self._config.width,
             self._config.height,
-            actual_w,
-            actual_h,
         )
 
     def read(self) -> np.ndarray | None:
         """Return the next frame or None when the grab failed."""
         if self._capture is None:
             raise RuntimeError("CameraStream.start must be called before read")
-        ok, frame = self._capture.read()
-        if not ok or frame is None:
+        frame = self._capture.read()
+        if frame is None:
             self._consecutive_failures += 1
             return None
         self._consecutive_failures = 0
@@ -105,9 +102,9 @@ class CameraStream:
 
     def close(self) -> None:
         if self._capture is not None:
-            self._capture.release()
+            self._capture.close()
             self._capture = None
-            LOGGER.info("camera_closed index=%d", self._config.index)
+            LOGGER.info("camera_closed")
 
     def __enter__(self) -> "CameraStream":
         self.start()
