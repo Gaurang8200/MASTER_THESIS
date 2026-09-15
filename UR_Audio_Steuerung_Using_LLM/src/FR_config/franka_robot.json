@@ -19,7 +19,7 @@
     "2": 0.040
   },
   "default_orientation": [1.0, 0.0, 0.0, 0.0],
-  "calibration_image_size": [640, 480],
+  "calibration_image_size": [640, 400],
   "mirror_x": true,
   "workspace": {
     "x": [0.1, 0.75],
