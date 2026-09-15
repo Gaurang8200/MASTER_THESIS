@@ -73,6 +73,10 @@ class RgbCameraStream:
             return self._capture is not None and self._capture.isOpened()
         return self._oak_pipeline is not None
 
+    @property
+    def backend(self) -> str:
+        return self._backend
+
     def start(self) -> None:
         if self.is_open:
             return
