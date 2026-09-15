@@ -55,6 +55,7 @@ class CrossPlatformText(tk.Text):
 from src.speech.speech_to_text_local import SpeechToTextLocal
 from src.speech.information_extraction_openai_api_multi import InformationExtractionOpenAIMulti
 from src.speech.microphone_devices import discover_input_microphones
+from src.camera_devices import apply_camera_environment, discover_rgb_cameras
 from src.detection_preparation import get_default_robot_ip, prepare_robot_for_detection
 from src.robot_method_selector_multi import select_robot_methods_multi, select_target_object
 from src.zone_coordinates import get_zone_coordinates
@@ -146,17 +147,46 @@ def update_workflow_status(status):
    status_label.config(text=f"Status: {status}")
    update_button_states()
 
-def update_button_states():
+def update_button_states() -> None:
    """Update button states based on current workflow status"""
-   # Detection button - always enabled
-   btn_detect.config(state="normal")
-   # Recording button - enabled only if objects detected
-   btn_record.config(state="normal" if detected_objects else "disabled")
-   # Execute button - enabled only if robot methods exist
-   btn_execute.config(state="normal" if robot_methods else "disabled")
+   camera_ready = camera_mode.get() == "2d" and camera_var.get() in camera_mapping
+   detection_ready = camera_mode.get() == "2d" and (
+       exec_mode.get() == "simulate" or camera_ready
+   )
+   btn_detect.config(state="normal" if detection_ready else "disabled")
+   btn_record.config(state="normal" if detected_objects and camera_ready else "disabled")
+   btn_execute.config(state="normal" if robot_methods and camera_ready else "disabled")
 
 def update_robot_ip():
    robot_ip.set(get_default_robot_ip(robot_type.get()))
+
+def apply_selected_camera() -> None:
+   if camera_mode.get() != "2d":
+       raise RuntimeError("OAK D depth mode is waiting for 3D calibration")
+   value = camera_mapping.get(camera_var.get())
+   if value is None:
+       raise RuntimeError("No RGB camera is selected")
+   apply_camera_environment(value)
+
+def reset_camera_workflow(_event: object | None = None) -> None:
+   global detected_objects, selected_object
+   detected_objects = []
+   selected_object = None
+   robot_methods.clear()
+   update_object_display()
+   update_workflow_status(WorkflowStatus.READY_FOR_DETECTION)
+
+def update_camera_mode() -> None:
+   if camera_mode.get() == "2d":
+       camera_combo.configure(values=list(camera_mapping), state="readonly")
+       if camera_mapping:
+           camera_var.set(next(iter(camera_mapping)))
+       else:
+           camera_var.set("No RGB camera found")
+   else:
+       camera_combo.configure(values=depth_camera_labels, state="readonly")
+       camera_var.set(depth_camera_labels[0])
+   reset_camera_workflow()
 
 def save_command_history():
    if ie_instance:
@@ -250,11 +280,23 @@ def publish_multimodal_rejection(reason):
 
 def capture_and_detect_objects():
    """Enhanced capture with simulation mode support"""
-   global detected_objects, ie_instance
+   global detected_objects, selected_object, ie_instance
 
+   detected_objects = []
+   selected_object = None
+   robot_methods.clear()
    update_workflow_status(WorkflowStatus.PROCESSING)
+   update_object_display()
    output_text.delete("1.0", tk.END)
    output_text.insert(tk.END, "DETECTION: Starting object detection...\n")
+
+   if exec_mode.get() == "real":
+       try:
+           apply_selected_camera()
+       except RuntimeError as error:
+           output_text.insert(tk.END, f"CAMERA: {error}\n")
+           update_workflow_status(WorkflowStatus.READY_FOR_DETECTION)
+           return
 
    previous_robot_type = os.environ.get("ROBOT_TYPE")
    os.environ["ROBOT_TYPE"] = robot_type.get()
@@ -641,6 +683,11 @@ def toggle_recording():
        return
    if not detected_objects:
        messagebox.showwarning("No Objects", "Please detect objects first")
+       return
+   try:
+       apply_selected_camera()
+   except RuntimeError as error:
+       messagebox.showerror("Camera unavailable", str(error))
        return
    idx = mic_mapping.get(mic_var.get())
    if idx is None:
@@ -1424,6 +1471,44 @@ ttk.Radiobutton(
 ttk.Label(left_frame, text="Enter Robot IP:").pack(pady=(10,0))
 robot_ip = tk.StringVar(app, value=get_default_robot_ip(robot_type.get()))
 ttk.Entry(left_frame, textvariable=robot_ip, width=20).pack(pady=(0,10))
+
+ttk.Label(left_frame, text="Camera Mode:").pack(anchor="w", pady=(10,0), padx=10)
+camera_mode = tk.StringVar(app, value="2d")
+ttk.Radiobutton(
+   left_frame,
+   text="2D RGB Camera",
+   variable=camera_mode,
+   value="2d",
+   command=update_camera_mode,
+).pack(anchor="w", padx=20)
+ttk.Radiobutton(
+   left_frame,
+   text="3D Depth Camera",
+   variable=camera_mode,
+   value="3d",
+   command=update_camera_mode,
+).pack(anchor="w", padx=20)
+
+camera_options = discover_rgb_cameras()
+camera_mapping = {option.label: option.value for option in camera_options}
+default_camera_name = next(iter(camera_mapping), "No RGB camera found")
+oak_camera_names = [
+   option.label for option in camera_options if option.backend == "oak_rgb"
+]
+depth_camera_labels = [
+   f"{name.replace(' RGB', '')} Depth planned" for name in oak_camera_names
+] or ["No OAK D found"]
+camera_var = tk.StringVar(app, value=default_camera_name)
+ttk.Label(left_frame, text="Select Camera:").pack(pady=(10,0))
+camera_combo = ttk.Combobox(
+   left_frame,
+   textvariable=camera_var,
+   values=list(camera_mapping),
+   state="readonly",
+   width=28,
+)
+camera_combo.pack(pady=(0,10))
+camera_combo.bind("<<ComboboxSelected>>", reset_camera_workflow)
 
 ttk.Label(left_frame, text="Befehlstyp:").pack(anchor="w", pady=(10,0), padx=10)
 command_type = tk.StringVar(app, value="new")
