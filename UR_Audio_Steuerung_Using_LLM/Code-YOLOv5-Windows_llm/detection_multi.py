@@ -14,7 +14,7 @@ WEIGHTS = 'my_model.pt'
 CAMERA_INDEX = 0
 ROBOT_RESOLUTION = (2560, 1472)
 UNIVERSAL_CAPTURE_RESOLUTION = (2560, 1472)
-FRANKA_CAPTURE_RESOLUTION = (1280, 720)
+FRANKA_CAPTURE_RESOLUTION = (1280, 960)
 IMAGE_RESOLUTION = UNIVERSAL_CAPTURE_RESOLUTION
 
 
@@ -103,8 +103,8 @@ class MultiObjectDetector:
                 actual_width != capture_width or actual_height != capture_height
             ):
                 raise RuntimeError(
-                    "Franka camera must provide 1280 x 720 because the active "
-                    "calibration was recorded at 1280 x 720"
+                    f"Franka camera must provide {capture_width} x {capture_height} "
+                    "for conversion into the 640 x 480 calibration"
                 )
             
             # Use absolute path for photos directory
