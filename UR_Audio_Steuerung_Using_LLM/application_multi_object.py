@@ -278,13 +278,14 @@ def publish_multimodal_rejection(reason):
    )
    feedback.rejection(reason)
 
-def capture_and_detect_objects():
+def capture_and_detect_objects(preserve_command: bool = False) -> None:
    """Enhanced capture with simulation mode support"""
    global detected_objects, selected_object, ie_instance
 
    detected_objects = []
-   selected_object = None
-   robot_methods.clear()
+   if not preserve_command:
+       selected_object = None
+       robot_methods.clear()
    update_workflow_status(WorkflowStatus.PROCESSING)
    update_object_display()
    output_text.delete("1.0", tk.END)
@@ -927,7 +928,7 @@ def execute_workflow_handler():
         
         try:
             # Re-run detection
-            capture_and_detect_objects()
+            capture_and_detect_objects(preserve_command=True)
             
             if not detected_objects:
                 output_text.insert("end", " ERROR: No objects detected during verification. Workflow aborted.\n")
