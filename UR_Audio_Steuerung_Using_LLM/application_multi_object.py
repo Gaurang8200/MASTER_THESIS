@@ -544,7 +544,7 @@ def _gesture_result_is_fresh(gesture_result, maximum_age_seconds=1.5):
    return isinstance(observed_at, (int, float)) and time.time() - observed_at <= maximum_age_seconds
 
 
-def _prepare_command(text, gesture_result):
+def _prepare_command(text, gesture_result, gesture_was_fresh):
    global ie_instance, selected_object, pending_command_info
    if ie_instance is None:
        ie_instance = InformationExtractionOpenAIMulti()
@@ -574,7 +574,7 @@ def _prepare_command(text, gesture_result):
    if multimodal.required and not multimodal.accepted:
        publish_multimodal_rejection(multimodal.reason)
        return False
-   if multimodal.required and not _gesture_result_is_fresh(gesture_result):
+   if multimodal.required and not gesture_was_fresh:
        publish_multimodal_rejection("fingertip_not_detected")
        return False
    if multimodal.required and multimodal.selected_object is not None:
@@ -623,6 +623,13 @@ def _finish_recording():
    global recording, stop_listening, last_audio, gesture_poll_job
    if not recording:
        return
+   live_gesture_result = (
+       gesture_client.latest_result() if gesture_start_error is None else None
+   )
+   gesture_was_fresh = (
+       live_gesture_result is not None
+       and _gesture_result_is_fresh(live_gesture_result)
+   )
    recording = False
    if gesture_poll_job is not None:
        app.after_cancel(gesture_poll_job)
@@ -636,6 +643,10 @@ def _finish_recording():
        "reason": "gesture_process_not_started",
        "safe_to_use": False,
    }
+   if gesture_was_fresh:
+       gesture_result = live_gesture_result
+   else:
+       gesture_was_fresh = _gesture_result_is_fresh(gesture_result)
    print("MULTIMODAL: Gesture result " + json.dumps(gesture_result, ensure_ascii=False))
    text = ""
    if last_audio is not None:
@@ -651,7 +662,7 @@ def _finish_recording():
        update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
        return
    try:
-       prepared = _prepare_command(text, gesture_result)
+       prepared = _prepare_command(text, gesture_result, gesture_was_fresh)
    except Exception as error:
        output_text.insert(tk.END, f"Command preparation error: {error}\n")
        prepared = False
