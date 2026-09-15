@@ -7,11 +7,16 @@ import sys
 import json
 from pathlib import Path
 
+AUDIO_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(AUDIO_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
+
+from src.camera_devices import RgbCameraStream
+
 # === Configuration Constants ===
 SAVE_DIRECTORY = 'photos'
 DETECTION_SCRIPT = 'yolov5/detect_multi_objects.py'  # Use new multi-object detection
 WEIGHTS = 'my_model.pt'
-CAMERA_INDEX = 0
 ROBOT_RESOLUTION = (2560, 1472)
 UNIVERSAL_CAPTURE_RESOLUTION = (2560, 1472)
 FRANKA_CAPTURE_RESOLUTION = (1280, 960)
@@ -79,18 +84,13 @@ class MultiObjectDetector:
     
     def capture_image(self, filename="photo_1.jpg"):
         """Capture image from camera"""
-        cap = None
+        camera = None
         try:
-            cap = cv2.VideoCapture(CAMERA_INDEX)
-            if not cap.isOpened():
-                raise Exception(f"Cannot open camera {CAMERA_INDEX}")
-
             capture_width, capture_height = get_capture_resolution()
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, capture_width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, capture_height)
-            
-            ret, frame = cap.read()
-            if not ret:
+            camera = RgbCameraStream(capture_width, capture_height)
+            camera.start()
+            frame = camera.read()
+            if frame is None:
                 raise Exception("Failed to capture image")
 
             actual_height, actual_width = frame.shape[:2]
@@ -118,8 +118,8 @@ class MultiObjectDetector:
             print(f"ERROR: Camera capture failed: {e}")
             return None
         finally:
-            if cap is not None:
-                cap.release()
+            if camera is not None:
+                camera.close()
     
     def detect_all_objects(self, image_path, confidence_threshold=0.25):
         """
@@ -146,9 +146,6 @@ class MultiObjectDetector:
         if not os.path.exists(abs_image_path):
             print(f"ERROR: Image file not found: {abs_image_path}")
             return []
-        
-        # Clear old detection results first
-        self._clear_old_results()
         
         # Find model
         model_path = self._find_model(yolov5_dir)
@@ -702,6 +699,7 @@ def capture_and_detect_all(mode="auto"):
     Returns list of all detected objects
     """
     detector = MultiObjectDetector()
+    detector._clear_old_results()
     image_path = None
     
     # Check environment variable for explicit mode override
@@ -726,7 +724,7 @@ def capture_and_detect_all(mode="auto"):
         image_path = detector.capture_image()
         if not image_path:
             print("ERROR: Failed to capture image from camera")
-            return []
+            return None
     else:
         # Auto mode: Check for test image only if no explicit mode set
         if _has_test_image():
@@ -743,7 +741,7 @@ def capture_and_detect_all(mode="auto"):
             image_path = detector.capture_image()
             if not image_path:
                 print("ERROR: Failed to capture image from camera")
-                return []
+                return None
     
     # Detect all objects
     detected_objects = detector.detect_all_objects(image_path)
@@ -866,6 +864,9 @@ if __name__ == "__main__":
     
     # Test the system
     detected_objects = capture_and_detect_all(mode=detection_mode)
+
+    if detected_objects is None:
+        raise SystemExit(2)
     
     if detected_objects:
         print(f"\nDETECTION: Successfully detected {len(detected_objects)} objects")

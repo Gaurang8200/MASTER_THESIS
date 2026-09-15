@@ -8,6 +8,7 @@ venv/
 .venv/
 venv*/
 .pytest_cache/
+.cache/
 backup/
 
 # Trained weights, datasets and training runs are tracked outside the repository
