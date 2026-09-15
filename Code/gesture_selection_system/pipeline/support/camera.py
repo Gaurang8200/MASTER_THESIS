@@ -20,7 +20,7 @@ AUDIO_PROJECT_ROOT = REPOSITORY_ROOT / "UR_Audio_Steuerung_Using_LLM"
 if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
-from src.camera_devices import RgbCameraStream
+from src.camera_devices import OAK_RGB_BACKEND, RgbCameraStream
 
 from config import CameraConfig
 
@@ -38,6 +38,12 @@ class CameraStream:
     @property
     def is_open(self) -> bool:
         return self._capture is not None and self._capture.is_open
+
+    @property
+    def rotation_degrees(self) -> int:
+        if self._capture is not None and self._capture.backend == OAK_RGB_BACKEND:
+            return 0
+        return self._config.rotation_degrees
 
     def start(self) -> None:
         if self.is_open:
@@ -60,7 +66,7 @@ class CameraStream:
             self._consecutive_failures += 1
             return None
         self._consecutive_failures = 0
-        if self._config.rotation_degrees == 180:
+        if self.rotation_degrees == 180:
             frame = cv2.rotate(frame, cv2.ROTATE_180)
         if self._config.flip_horizontal:
             frame = cv2.flip(frame, 1)
@@ -76,7 +82,7 @@ class CameraStream:
         x_value, y_value = point
         if self._config.flip_horizontal:
             x_value = width - 1.0 - x_value
-        if self._config.rotation_degrees == 180:
+        if self.rotation_degrees == 180:
             x_value = width - 1.0 - x_value
             y_value = height - 1.0 - y_value
         return x_value, y_value
@@ -91,7 +97,7 @@ class CameraStream:
         x1, y1, x2, y2 = box
         if self._config.flip_horizontal:
             x1, x2 = width - x2, width - x1
-        if self._config.rotation_degrees == 180:
+        if self.rotation_degrees == 180:
             x1, x2 = width - x2, width - x1
             y1, y2 = height - y2, height - y1
         return x1, y1, x2, y2
