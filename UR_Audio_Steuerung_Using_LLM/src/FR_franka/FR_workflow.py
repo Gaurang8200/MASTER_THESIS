@@ -521,10 +521,13 @@ def transform_franka_pixel_to_robot(
     config = load_franka_config()
     expected_size = (config.calibration_width, config.calibration_height)
     actual_size = (int(frame_width), int(frame_height))
-    if actual_size != expected_size:
+    if actual_size[0] <= 0 or actual_size[1] <= 0:
+        raise ValueError("Franka destination image dimensions must be positive")
+    if actual_size[0] * expected_size[1] != actual_size[1] * expected_size[0]:
         raise ValueError(
             f"Franka destination image is {actual_size[0]} x {actual_size[1]} but "
-            f"the active calibration requires {expected_size[0]} x {expected_size[1]}"
+            f"the active calibration aspect ratio is "
+            f"{expected_size[0]} x {expected_size[1]}"
         )
     transformer = OriginalFrankaPixelTransformer(
         expected_size,
