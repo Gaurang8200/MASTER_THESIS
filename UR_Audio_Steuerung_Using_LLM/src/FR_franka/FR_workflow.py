@@ -176,13 +176,17 @@ class FrankaAudioWorkflow:
             float(data["original_center_x"]),
             float(data["original_center_y"]),
         )
+        self._output(
+            "FRANKA SELECTED PIXEL: "
+            f"u={pixel.x:.2f}, v={pixel.y:.2f}"
+        )
         self._context.selected_point = self._transform_pixel(pixel)
         self._context.selected_class = self._read_selected_class(data)
         self._output(
             "FRANKA COORDINATES: "
             f"x={self._context.selected_point.x:.4f}, "
             f"y={self._context.selected_point.y:.4f}, "
-            f"table_z={self._context.selected_point.z:.4f}"
+            f"z={self._context.selected_point.z:.4f}"
         )
 
     def _move_above_selected_object(self) -> None:
