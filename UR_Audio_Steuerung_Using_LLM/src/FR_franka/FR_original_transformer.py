@@ -38,7 +38,7 @@ class OriginalFrankaPixelTransformer:
         calibration_size: tuple[int, int],
         mirror_x: bool,
         calibration_directory: Path,
-        pose_index: int = 15,
+        pose_index: int = 14,
     ) -> None:
         width, height = calibration_size
         if width <= 0 or height <= 0:
