@@ -492,6 +492,19 @@ def _write_selection_data(info, gesture_result):
        selected_object = matching[object_index]
    if selected_object is None:
        raise ValueError("No object was selected")
+   left_mono_center = selected_object.get("left_mono_center")
+   left_mono_frame_size = selected_object.get("left_mono_frame_size")
+   if exec_mode.get() == "real" and (
+       not isinstance(left_mono_center, list)
+       or len(left_mono_center) != 2
+       or not isinstance(left_mono_frame_size, list)
+       or len(left_mono_frame_size) != 2
+   ):
+       mapping_error = selected_object.get(
+           "left_mono_mapping_error",
+           "left mono mapping data is missing",
+       )
+       raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
    txt_dir = os.path.join(PRE, "txt_file")
    os.makedirs(txt_dir, exist_ok=True)
    depth_path = None
@@ -515,6 +528,9 @@ def _write_selection_data(info, gesture_result):
        "original_center_y": selected_object["center"][1],
        "original_bbox": selected_object["bbox"],
        "original_confidence": selected_object["confidence"],
+       "left_mono_center": left_mono_center,
+       "left_mono_frame_size": left_mono_frame_size,
+       "object_depth_mm": selected_object.get("object_depth_mm"),
        "selection_phase": "overview",
        "selection_source": info.get("selection_mode", "speech"),
        "gesture_session_id": info.get("gesture_session_id"),
@@ -779,17 +795,32 @@ def _transform_destination_point(gesture_result):
        raise ValueError("Destination camera size is missing")
    pixel_x, pixel_y = float(fingertip[0]), float(fingertip[1])
    if robot_type.get() == "franka":
-       from src.FR_franka import transform_franka_pixel_to_robot
+       from src.FR_franka import transform_franka_left_mono_pixel_to_robot
 
-       point = transform_franka_pixel_to_robot(
-           pixel_x,
-           pixel_y,
-           frame_width,
-           frame_height,
+       left_pixel = gesture_result.get("left_mono_pixel")
+       left_width = int(gesture_result.get("left_mono_frame_width") or 0)
+       left_height = int(gesture_result.get("left_mono_frame_height") or 0)
+       if not isinstance(left_pixel, list) or len(left_pixel) != 2:
+           mapping_error = gesture_result.get(
+               "left_mono_mapping_error",
+               "left mono fingertip pixel is missing",
+           )
+           raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
+       if left_width <= 0 or left_height <= 0:
+           raise ValueError("Left mono camera size is missing")
+       left_x, left_y = float(left_pixel[0]), float(left_pixel[1])
+       point = transform_franka_left_mono_pixel_to_robot(
+           left_x,
+           left_y,
+           left_width,
+           left_height,
        )
        print(
            "FRANKA DESTINATION TRANSFORM: "
-           f"u={pixel_x:.1f}, v={pixel_y:.1f}, x={point.x:.5f}, y={point.y:.5f}"
+           f"rgb_u={pixel_x:.1f}, rgb_v={pixel_y:.1f}, "
+           f"left_u={left_x:.1f}, left_v={left_y:.1f}, "
+           f"depth={float(gesture_result.get('fingertip_depth_mm') or 0.0):.1f} mm, "
+           f"x={point.x:.5f}, y={point.y:.5f}"
        )
        return point.x, point.y
    detection_data = load_overview_detection_data()

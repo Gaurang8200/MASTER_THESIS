@@ -174,15 +174,40 @@ class FrankaAudioWorkflow:
     def _convert_selected_pixel(self) -> None:
         selection_path = TXT_DIR / "selection_data.json"
         data = json.loads(selection_path.read_text(encoding="utf-8"))
-        pixel = PixelPoint(
+        rgb_pixel = PixelPoint(
             float(data["original_center_x"]),
             float(data["original_center_y"]),
         )
         self._output(
-            "FRANKA SELECTED PIXEL: "
-            f"u={pixel.x:.2f}, v={pixel.y:.2f}"
+            "FRANKA RGB PIXEL: "
+            f"u={rgb_pixel.x:.2f}, v={rgb_pixel.y:.2f}"
         )
-        self._context.selected_point = self._transform_pixel(pixel)
+        left_center = data.get("left_mono_center")
+        left_size = data.get("left_mono_frame_size")
+        if (
+            isinstance(left_center, list)
+            and len(left_center) == 2
+            and isinstance(left_size, list)
+            and len(left_size) == 2
+        ):
+            calibration_pixel = PixelPoint(
+                float(left_center[0]),
+                float(left_center[1]),
+            )
+            calibration_size = (int(left_size[0]), int(left_size[1]))
+        elif self._simulation:
+            calibration_pixel = rgb_pixel
+            calibration_size = _read_detection_image_size()
+        else:
+            raise ValueError("Selected object has no mapped left mono calibration pixel")
+        self._output(
+            "FRANKA LEFT MONO PIXEL: "
+            f"u={calibration_pixel.x:.2f}, v={calibration_pixel.y:.2f}"
+        )
+        self._context.selected_point = self._transform_pixel(
+            calibration_pixel,
+            calibration_size,
+        )
         self._context.selected_class = self._read_selected_class(data)
         depth_path_value = data.get("depth_path")
         if depth_path_value:
@@ -393,8 +418,11 @@ class FrankaAudioWorkflow:
             return
         perception_steps.delet_txt_file()
 
-    def _transform_pixel(self, pixel: PixelPoint) -> RobotPoint:
-        image_size = _read_detection_image_size()
+    def _transform_pixel(
+        self,
+        pixel: PixelPoint,
+        image_size: tuple[int, int],
+    ) -> RobotPoint:
         point = self._transformer.transform(
             pixel,
             image_size,
@@ -547,7 +575,7 @@ def prepare_franka_for_detection(robot_ip: str | None = None) -> None:
         arm.close()
 
 
-def transform_franka_pixel_to_robot(
+def transform_franka_left_mono_pixel_to_robot(
     pixel_x: float,
     pixel_y: float,
     frame_width: int,

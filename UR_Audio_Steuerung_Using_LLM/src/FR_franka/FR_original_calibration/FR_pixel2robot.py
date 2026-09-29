@@ -15,7 +15,6 @@ def pixel2robot(cordx, cordy, nr):
     input_name = "output_wp2camera.json"
     input_name2 = "output_c2f.json"
     input_name3 = "robot_poses.json"
-    output_name = "output_b2p.json" #not used
     x = cordx
     y = cordy
     nr = nr
@@ -27,7 +26,7 @@ def pixel2robot(cordx, cordy, nr):
     #print("fTc: \n", fTc)
     #print("bTf_i: \n", bTf_i[nr])
 
-    result, bTc, rot_c2p, trans_c2p, bTp, Spitze_mat = fp.calc_pixel2robot(tvec, rvec, camera_matrix, bTf_i, fTc, pixel_coords, nr, output_name, False)#printout results False
+    result, bTc, rot_c2p, trans_c2p, bTp, Spitze_mat = fp.calc_pixel2robot(tvec, rvec, camera_matrix, bTf_i, fTc, pixel_coords, nr, False)#printout results False
     #print(result.shape)
     print("results:")
     print(result)

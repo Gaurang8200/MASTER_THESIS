@@ -80,12 +80,48 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
         "frame_width": None,
         "frame_height": None,
         "fingertip_pixel": None,
+        "left_mono_pixel": None,
+        "left_mono_frame_width": None,
+        "left_mono_frame_height": None,
+        "fingertip_depth_mm": None,
+        "left_mono_mapping_error": None,
         "fingertip_confidence": None,
         "pointing_finger_present": False,
         "objects_considered": 0,
         "selected_object": None,
         "latency_ms": None,
     }
+
+
+def _left_mono_payload(
+    camera: CameraStream,
+    sensor_point: tuple[float, float] | None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "left_mono_pixel": None,
+        "left_mono_frame_width": None,
+        "left_mono_frame_height": None,
+        "fingertip_depth_mm": None,
+        "left_mono_mapping_error": None,
+    }
+    if sensor_point is None:
+        return payload
+    try:
+        left_point, depth_mm, left_size = camera.project_sensor_point_to_left(
+            sensor_point
+        )
+    except (RuntimeError, ValueError) as error:
+        payload["left_mono_mapping_error"] = str(error)
+        return payload
+    payload.update(
+        {
+            "left_mono_pixel": [left_point[0], left_point[1]],
+            "left_mono_frame_width": left_size[0],
+            "left_mono_frame_height": left_size[1],
+            "fingertip_depth_mm": depth_mm,
+        }
+    )
+    return payload
 
 
 REJECTION_INFORMATION_RANK = {
@@ -289,6 +325,7 @@ def run_session(
                     "frame_width": int(frame.shape[1]),
                     "frame_height": int(frame.shape[0]),
                     "fingertip_pixel": [sensor_center[0], sensor_center[1]],
+                    **_left_mono_payload(camera, sensor_center),
                     "fingertip_confidence": fingertip.confidence,
                     "pointing_finger_present": True,
                     "objects_considered": touch.considered if touch is not None else 0,
@@ -313,6 +350,7 @@ def run_session(
                     if sensor_center is not None
                     else None
                 )
+                result.update(_left_mono_payload(camera, sensor_center))
                 result["last_seen_at_unix_s"] = time.time()
                 result["frame_index"] = frame_index
                 result["latency_ms"] = round(
@@ -351,6 +389,7 @@ def run_session(
                         if sensor_center is not None
                         else None
                     ),
+                    **_left_mono_payload(camera, sensor_center),
                     "fingertip_confidence": fingertip.confidence if fingertip is not None else None,
                     "pointing_finger_present": pointing_present,
                     "objects_considered": len(objects),
