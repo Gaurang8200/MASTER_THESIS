@@ -229,7 +229,7 @@ class RgbCameraStream:
             rgb_output = rgb.requestOutput(
                 size=(self._width, self._height),
                 type=dai.ImgFrame.Type.BGR888p,
-                resizeMode=dai.ImgResizeMode.LETTERBOX,
+                resizeMode=dai.ImgResizeMode.RESIZE,
                 fps=15,
                 enableUndistortion=False,
             )

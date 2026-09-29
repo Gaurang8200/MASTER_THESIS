@@ -257,6 +257,11 @@ def run_session(
         gesture.start()
         objects_source.start()
         camera.start()
+        if display:
+            import cv2
+
+            cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(WINDOW_NAME, config.camera.width, config.camera.height)
         _write_json(
             ready_file,
             {
