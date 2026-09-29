@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -16,6 +17,7 @@ if str(AUDIO_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_ROOT))
 
 from src.camera_devices import (
+    OAK_MONO_RESOLUTION,
     OakDFrame,
     map_detections_to_left_mono,
     parse_camera_option,
@@ -42,9 +44,9 @@ class OakDepthPipelineTests(unittest.TestCase):
         rgb_transformation = RgbTransformation()
         left_transformation = object()
         frame = OakDFrame(
-            color=np.zeros((800, 1280, 3), dtype=np.uint8),
-            depth_mm=np.full((800, 1280), 620, dtype=np.uint16),
-            left_mono=np.zeros((400, 640), dtype=np.uint8),
+            color=np.zeros((720, 1280, 3), dtype=np.uint8),
+            depth_mm=np.full((720, 1280), 620, dtype=np.uint16),
+            left_mono=np.zeros((720, 1280), dtype=np.uint8),
             rgb_transformation=rgb_transformation,
             left_transformation=left_transformation,
         )
@@ -53,7 +55,7 @@ class OakDepthPipelineTests(unittest.TestCase):
             frame,
         )
         self.assertEqual(mapped[0]["left_mono_center"], [372.0, 200.0])
-        self.assertEqual(mapped[0]["left_mono_frame_size"], [640, 400])
+        self.assertEqual(mapped[0]["left_mono_frame_size"], [1280, 720])
         self.assertEqual(mapped[0]["object_depth_mm"], 620.0)
         self.assertEqual(rgb_transformation.depth, 620.0)
         self.assertEqual(
@@ -61,6 +63,28 @@ class OakDepthPipelineTests(unittest.TestCase):
             (800.0, 420.0),
         )
         self.assertIs(rgb_transformation.target, left_transformation)
+
+    def test_active_mono_resolution_matches_calibration(self) -> None:
+        config_path = AUDIO_ROOT / "src" / "FR_config" / "franka_robot.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        self.assertEqual(OAK_MONO_RESOLUTION, (1280, 720))
+        self.assertEqual(config["calibration_image_size"], [1280, 720])
+
+    def test_franka_capture_and_gesture_use_calibration_resolution(self) -> None:
+        detector_root = AUDIO_ROOT / "Code-YOLOv5-Windows_llm"
+        for name in ("detection_multi.py", "detection_multi_precision_run.py"):
+            source = (detector_root / name).read_text(encoding="utf-8")
+            self.assertIn("FRANKA_CAPTURE_RESOLUTION = (1280, 720)", source)
+        gesture_config = (
+            REPOSITORY_ROOT
+            / "Code"
+            / "gesture_selection_system"
+            / "pipeline"
+            / "configs"
+            / "gesture_config.yaml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("  width: 1280\n  height: 720", gesture_config)
+        self.assertIn("  imgsz: 640", gesture_config)
 
     def test_rgb_mapping_rejects_missing_object_depth(self) -> None:
         frame = OakDFrame(

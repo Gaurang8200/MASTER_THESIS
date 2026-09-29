@@ -11,6 +11,7 @@ import numpy as np
 
 CAMERA_DEVICE_ENV = "VISION_CAMERA_DEVICE"
 OAK_D_BACKEND = "oak_d"
+OAK_MONO_RESOLUTION = (1280, 720)
 
 
 @dataclass(frozen=True)
@@ -232,8 +233,8 @@ class RgbCameraStream:
                 fps=15,
                 enableUndistortion=False,
             )
-            left_output = left.requestOutput(size=(640, 400), fps=15)
-            right_output = right.requestOutput(size=(640, 400), fps=15)
+            left_output = left.requestOutput(size=OAK_MONO_RESOLUTION, fps=15)
+            right_output = right.requestOutput(size=OAK_MONO_RESOLUTION, fps=15)
             left_output.link(stereo.left)
             right_output.link(stereo.right)
             rgb_output.link(sync.inputs["rgb"])

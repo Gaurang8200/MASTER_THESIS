@@ -7,7 +7,7 @@ Place the calibration files produced with the active OAK D RGB stream here:
 3. `robot_poses.json`
 
 The calibration images must come from the OAK D left mono camera on `CAM_B`.
-The configured left mono calibration resolution is 640 by 400. Runtime projects
+The configured left mono calibration resolution is 1280 by 720. Runtime projects
 the selected RGB point and its aligned depth into this left mono pixel grid
 before calling `pixel2robot`.
 
