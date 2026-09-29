@@ -762,6 +762,7 @@ def toggle_recording():
    session = gesture_outcome["session"]
    print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
 
+   microphone_error = None
    try:
        stop_listening = start_optional_background_listener(
            idx,
@@ -776,10 +777,8 @@ def toggle_recording():
    except Exception as error:
        stop_listening = None
        mic_var.set(GESTURE_ONLY_MICROPHONE)
-       output_text.insert(
-           tk.END,
-           f"MICROPHONE: Input unavailable. Continuing with gestures. {error}\n",
-       )
+       microphone_error = str(error)
+       print(f"MICROPHONE: Input unavailable. Continuing with gestures. {error}")
    recording = True
    btn_record.config(text="Stop Recording")
    update_workflow_status(WorkflowStatus.PROCESSING)
@@ -790,6 +789,11 @@ def toggle_recording():
        else "camera, gesture and microphone"
    )
    output_text.insert(tk.END, f"MULTIMODAL: {active_inputs} are active.\n")
+   if microphone_error is not None:
+       output_text.insert(
+           tk.END,
+           f"MICROPHONE: Input unavailable. Continuing with gestures. {microphone_error}\n",
+       )
    gesture_poll_job = app.after(200, _poll_gesture_session)
 
 
