@@ -479,6 +479,7 @@ def _listen_for_confirmation(prompt):
 
 def _write_selection_data(info, gesture_result):
    global selected_object
+   gesture_selection = info.get("selection_mode") == "gesture"
    object_type = str(info.get("object", ""))
    object_index = int(info.get("object_index", 0))
    matching = [
@@ -486,7 +487,7 @@ def _write_selection_data(info, gesture_result):
        for item in detected_objects
        if item["class_name"].lower() == object_type.lower()
    ]
-   if info.get("selection_mode") != "gesture":
+   if not gesture_selection:
        if object_index < 0 or object_index >= len(matching):
            raise ValueError("Selected object index is not available")
        selected_object = matching[object_index]
@@ -496,11 +497,19 @@ def _write_selection_data(info, gesture_result):
    left_mono_center = selected_object.get("left_mono_center")
    left_mono_frame_size = selected_object.get("left_mono_frame_size")
    object_depth_mm = selected_object.get("object_depth_mm")
+   selection_bbox = selected_object["bbox"]
    mapping_error = selected_object.get(
        "left_mono_mapping_error",
        "left mono mapping data is missing",
    )
-   if info.get("selection_mode") == "gesture":
+   if gesture_selection:
+       live_object = gesture_result.get("selected_object")
+       if not isinstance(live_object, dict):
+           raise ValueError("Gesture result has no live selected object")
+       live_bbox = live_object.get("bbox")
+       if not isinstance(live_bbox, list) or len(live_bbox) != 4:
+           raise ValueError("Gesture result has no live object bounding box")
+       selection_bbox = live_bbox
        rgb_selection_pixel = gesture_result.get("fingertip_pixel")
        left_mono_center = gesture_result.get("left_mono_pixel")
        left_mono_frame_size = [
@@ -522,7 +531,7 @@ def _write_selection_data(info, gesture_result):
        or object_depth_mm is None
    ):
        raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
-   if info.get("selection_mode") == "gesture":
+   if gesture_selection:
        print(
            "OAK D GESTURE POINT: "
            f"rgb_u={float(rgb_selection_pixel[0]):.2f}, "
@@ -535,12 +544,15 @@ def _write_selection_data(info, gesture_result):
    os.makedirs(txt_dir, exist_ok=True)
    depth_path = None
    if exec_mode.get() == "real":
-       metadata_path = os.path.join(txt_dir, "latest_depth_capture.json")
-       if not os.path.isfile(metadata_path):
-           raise FileNotFoundError("The synchronized OAK D depth capture is missing")
-       with open(metadata_path, "r", encoding="utf-8") as metadata_file:
-           depth_metadata = json.load(metadata_file)
-       source_depth_path = str(depth_metadata.get("depth_path", ""))
+       if gesture_selection:
+           source_depth_path = str(gesture_result.get("depth_path", ""))
+       else:
+           metadata_path = os.path.join(txt_dir, "latest_depth_capture.json")
+           if not os.path.isfile(metadata_path):
+               raise FileNotFoundError("The synchronized OAK D depth capture is missing")
+           with open(metadata_path, "r", encoding="utf-8") as metadata_file:
+               depth_metadata = json.load(metadata_file)
+           source_depth_path = str(depth_metadata.get("depth_path", ""))
        if not source_depth_path or not os.path.isfile(source_depth_path):
            raise FileNotFoundError("The synchronized OAK D depth file is missing")
        depth_path = os.path.join(txt_dir, "selected_depth.npy")
@@ -552,7 +564,7 @@ def _write_selection_data(info, gesture_result):
        "selection_timestamp": str(time.time()),
        "original_center_x": rgb_selection_pixel[0],
        "original_center_y": rgb_selection_pixel[1],
-       "original_bbox": selected_object["bbox"],
+       "original_bbox": selection_bbox,
        "original_confidence": selected_object["confidence"],
        "left_mono_center": left_mono_center,
        "left_mono_frame_size": left_mono_frame_size,

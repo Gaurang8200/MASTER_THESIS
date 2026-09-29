@@ -149,6 +149,12 @@ class CameraStream:
             y1, y2 = height - y2, height - y1
         return x1, y1, x2, y2
 
+    def save_latest_depth(self, path: Path) -> None:
+        if self._latest_frame is None:
+            raise RuntimeError("OAK D depth frame is not available")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(path, self._latest_frame.depth_mm, allow_pickle=False)
+
     @property
     def consecutive_failures(self) -> int:
         return self._consecutive_failures

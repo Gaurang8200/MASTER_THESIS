@@ -84,6 +84,7 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
         "left_mono_frame_width": None,
         "left_mono_frame_height": None,
         "fingertip_depth_mm": None,
+        "depth_path": None,
         "left_mono_mapping_error": None,
         "fingertip_confidence": None,
         "pointing_finger_present": False,
@@ -244,6 +245,7 @@ def run_session(
     confirmed_key: str | None = None
     display_reason = str(result["reason"])
     camera = CameraStream(config.camera)
+    depth_file = result_file.with_name(f"{session_id}_depth.npy")
     frame_index = 0
     window_created = False
     last_pointing_at: float | None = None
@@ -335,6 +337,7 @@ def run_session(
                 selected = candidate
                 selection_complete = True
                 confirmed_key = candidate_key
+                camera.save_latest_depth(depth_file)
                 result = {
                     **_base_result(session_id, "selected", "selected"),
                     "safe_to_use": True,
@@ -346,6 +349,7 @@ def run_session(
                     "frame_height": int(frame.shape[0]),
                     "fingertip_pixel": [sensor_center[0], sensor_center[1]],
                     **mapping,
+                    "depth_path": str(depth_file),
                     "fingertip_confidence": fingertip.confidence,
                     "pointing_finger_present": True,
                     "objects_considered": touch.considered if touch is not None else 0,
@@ -382,7 +386,9 @@ def run_session(
                 selection_complete
                 and candidate_key is not None
                 and candidate_key == confirmed_key
+                and mapping_ready
             ):
+                camera.save_latest_depth(depth_file)
                 result["hold_seconds"] = hold.held_s
                 result["fingertip_pixel"] = (
                     [sensor_center[0], sensor_center[1]]
@@ -390,6 +396,10 @@ def run_session(
                     else None
                 )
                 result.update(mapping)
+                result["depth_path"] = str(depth_file)
+                result["selected_object"] = _object_payload(
+                    candidate, camera, frame.shape
+                )
                 result["last_seen_at_unix_s"] = time.time()
                 result["frame_index"] = frame_index
                 result["latency_ms"] = round(
