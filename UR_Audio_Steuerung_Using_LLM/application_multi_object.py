@@ -54,12 +54,7 @@ class CrossPlatformText(tk.Text):
 # Multi-Object System Imports
 from src.speech.speech_to_text_local import SpeechToTextLocal
 from src.speech.information_extraction_openai_api_multi import InformationExtractionOpenAIMulti
-from src.speech.microphone_devices import (
-   GESTURE_ONLY_MICROPHONE,
-   build_microphone_mapping,
-   discover_input_microphones,
-   start_optional_background_listener,
-)
+from src.speech.microphone_devices import discover_input_microphones
 from src.camera_devices import apply_camera_environment, discover_oak_cameras
 from src.detection_preparation import get_default_robot_ip, prepare_robot_for_detection
 from src.robot_method_selector_multi import select_robot_methods_multi, select_target_object
@@ -762,38 +757,26 @@ def toggle_recording():
    session = gesture_outcome["session"]
    print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
 
-   microphone_error = None
-   try:
-       stop_listening = start_optional_background_listener(
-           idx,
-           callback,
-           ambient_noise_seconds=1.0,
-           phrase_time_limit=5,
-       )
-       if stop_listening is None:
-           print("MICROPHONE: Gesture only mode active")
-       else:
-           print(f"MICROPHONE: Background listener started for input index {idx}")
-   except Exception as error:
-       stop_listening = None
-       mic_var.set(GESTURE_ONLY_MICROPHONE)
-       microphone_error = str(error)
-       print(f"MICROPHONE: Input unavailable. Continuing with gestures. {error}")
+   stop_listening = None
+   if idx is not None:
+       try:
+           print(f"MICROPHONE: Starting selected input index {idx}")
+           recognizer = sr.Recognizer()
+           microphone = sr.Microphone(device_index=idx)
+           with microphone as source:
+               recognizer.adjust_for_ambient_noise(source, duration=1)
+           stop_listening = recognizer.listen_in_background(
+               microphone,
+               callback,
+               phrase_time_limit=5,
+           )
+       except Exception as error:
+           print(f"MICROPHONE: Input unavailable. Continuing without audio. {error}")
    recording = True
    btn_record.config(text="Stop Recording")
    update_workflow_status(WorkflowStatus.PROCESSING)
    output_text.delete("1.0", tk.END)
-   active_inputs = (
-       "camera and gesture"
-       if stop_listening is None
-       else "camera, gesture and microphone"
-   )
-   output_text.insert(tk.END, f"MULTIMODAL: {active_inputs} are active.\n")
-   if microphone_error is not None:
-       output_text.insert(
-           tk.END,
-           f"MICROPHONE: Input unavailable. Continuing with gestures. {microphone_error}\n",
-       )
+   output_text.insert(tk.END, "MULTIMODAL: Camera and gesture capture are active.\n")
    gesture_poll_job = app.after(200, _poll_gesture_session)
 
 
@@ -870,19 +853,20 @@ def _collect_destination_methods():
        destination_audio.clear()
        session = gesture_client.start(selection_kind="location", hold_seconds=3.0)
        print(f"MULTIMODAL DESTINATION: Gesture session {session.session_id}")
-       try:
-           stop_destination_audio = start_optional_background_listener(
-               idx,
-               destination_callback,
-               ambient_noise_seconds=0.5,
-               phrase_time_limit=5,
-           )
-       except Exception as error:
-           stop_destination_audio = None
-           mic_var.set(GESTURE_ONLY_MICROPHONE)
-           feedback.publish(
-               f"Microphone unavailable. Continuing with gesture selection. {error}"
-           )
+       stop_destination_audio = None
+       if idx is not None:
+           try:
+               recognizer = sr.Recognizer()
+               microphone = sr.Microphone(device_index=idx)
+               with microphone as source:
+                   recognizer.adjust_for_ambient_noise(source, duration=0.5)
+               stop_destination_audio = recognizer.listen_in_background(
+                   microphone,
+                   destination_callback,
+                   phrase_time_limit=5,
+               )
+           except Exception as error:
+               print(f"MICROPHONE: Destination audio unavailable. {error}")
        reminder_at = time.monotonic() + 120.0
        chosen_zone = None
        chosen_point = None
@@ -1563,19 +1547,29 @@ ttk.Radiobutton(left_frame, text="Linux", variable=platform_select, value="linux
 
 ttk.Label(left_frame, text="Select Microphone:").pack(pady=(10,0))
 try:
-   microphone_options, _ = discover_input_microphones()
+   microphone_options, default_microphone_index = discover_input_microphones()
 except Exception as error:
    print(f"MICROPHONE: Device discovery failed. {error}")
    microphone_options = []
+   default_microphone_index = None
 
-mic_mapping = build_microphone_mapping(microphone_options)
-default_microphone_name = GESTURE_ONLY_MICROPHONE
+mic_mapping = {
+   option.display_name: option.device_index for option in microphone_options
+}
+default_microphone_name = next(
+   (
+       option.display_name
+       for option in microphone_options
+       if option.device_index == default_microphone_index
+   ),
+   "No input microphone found",
+)
 mic_var = tk.StringVar(app, value=default_microphone_name)
 ttk.OptionMenu(
    left_frame,
    mic_var,
    default_microphone_name,
-   *(name for name in mic_mapping if name != default_microphone_name),
+   *mic_mapping.keys(),
 ).pack(pady=(0,10))
 
 # === ENHANCED BUTTONS WITH STATE MANAGEMENT ===
