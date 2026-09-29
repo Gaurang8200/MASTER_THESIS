@@ -3,6 +3,13 @@ import os
 import subprocess
 import time
 import sys
+from pathlib import Path
+
+AUDIO_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(AUDIO_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
+
+from src.camera_devices import RgbCameraStream
 
 # === Configuration Constants ===
 SAVE_DIRECTORY = 'photos'
@@ -10,7 +17,6 @@ DETECTION_SCRIPT = 'yolov5/detect.py'
 WEIGHTS = 'yolov5/my_model.pt'
 LABEL_FILE_PATH = 'txt_file/label_path.txt'
 CENTER_POINT_SAVE_PATH = 'txt_file/center_point.txt'
-CAMERA_INDEX = 0
 #IMAGE_RESOLUTION = (640, 480)
 ROBOT_RESOLUTION = (2560, 1472)
 IMAGE_RESOLUTION = (2560, 1472)
@@ -19,40 +25,21 @@ IMAGE_RESOLUTION = (2560, 1472)
 # === 1. Take Photo and Run Detection ===
 def take_photo_and_run_detection():
     """Capture a photo from the camera and run object detection."""
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        print("Error: Unable to open camera")
-        return
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2560)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1472)
-
     os.makedirs(SAVE_DIRECTORY, exist_ok=True)
-
-    photo_count = 0
-
+    camera = RgbCameraStream(*IMAGE_RESOLUTION)
     try:
-        while True:
-            time.sleep(5)  # Wait before taking a photo
-
-            ret, frame = cap.read()
-            if not ret:
-                print("Error: Unable to capture frame")
-                break
-
-            photo_count += 1
-            photo_path = os.path.join(SAVE_DIRECTORY, f'photo_{photo_count}.jpg')
-            cv2.imwrite(photo_path, frame)
-            print(f"Photo {photo_count} saved at {photo_path}")
-
-            # Display the captured frame
-            cv2.imshow('Frame', frame)
-
-            run_detection(photo_path)
-            break  # Capture and detect once, then exit loop
-
+        camera.start()
+        time.sleep(5)
+        rgbd_frame = camera.read_rgbd()
+        if rgbd_frame is None:
+            raise RuntimeError("Unable to capture synchronized OAK D RGB and depth")
+        photo_path = os.path.join(SAVE_DIRECTORY, "photo_1.jpg")
+        if not cv2.imwrite(photo_path, rgbd_frame.color):
+            raise RuntimeError(f"Unable to save {photo_path}")
+        print(f"Photo 1 saved at {photo_path}")
+        run_detection(photo_path)
     finally:
-        cap.release()
-        cv2.destroyAllWindows()
+        camera.close()
 
 
 # === 2. Run YOLOv5 Detection ===

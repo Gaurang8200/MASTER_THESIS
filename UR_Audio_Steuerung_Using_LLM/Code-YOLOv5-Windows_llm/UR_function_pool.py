@@ -7,6 +7,14 @@ from scipy import linalg
 import json
 from sympy import degree
 import os
+import sys
+from pathlib import Path
+
+AUDIO_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(AUDIO_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
+
+from src.camera_devices import RgbCameraStream
 
 """
 Sammlung von Funktion welche im Rahmen einer Kamerakalibrierung am Roboter benötigt werden.
@@ -548,35 +556,23 @@ def undistort_pixel(dist_coeff, camera_matrix, pixel_coords, nr):
 
 def capture_image():
     """Capture image from camera"""
+    camera = None
     try:
-        cap = cv2.VideoCapture(0)
-        
-        # Check if camera is opened
-        if not cap.isOpened():
-            print("ERROR: Could not open camera")
-            return False
-        
-        # Set resolution
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 2560)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1472)
-        
-        # Capture frame
-        ret, frame = cap.read()
-        
-        if ret:
-            # Save image
-            cv2.imwrite('photos/photo_1.jpg', frame)
-            print("SUCCESS: Image captured and saved to photos/photo_1.jpg")
-            cap.release()
-            return True
-        else:
-            print("ERROR: Failed to capture image")
-            cap.release()
-            return False
-            
+        camera = RgbCameraStream(2560, 1472)
+        camera.start()
+        rgbd_frame = camera.read_rgbd()
+        if rgbd_frame is None:
+            raise RuntimeError("Failed to capture synchronized OAK D RGB and depth")
+        if not cv2.imwrite('photos/photo_1.jpg', rgbd_frame.color):
+            raise RuntimeError("Failed to save photos/photo_1.jpg")
+        print("SUCCESS: Image captured and saved to photos/photo_1.jpg")
+        return True
     except Exception as e:
         print(f"ERROR: Camera error: {e}")
         return False
+    finally:
+        if camera is not None:
+            camera.close()
 
 def load_detection_data():
     """Load detection results from JSON file"""

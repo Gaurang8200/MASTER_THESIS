@@ -20,7 +20,7 @@ AUDIO_PROJECT_ROOT = REPOSITORY_ROOT / "UR_Audio_Steuerung_Using_LLM"
 if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
-from src.camera_devices import OAK_RGB_BACKEND, RgbCameraStream
+from src.camera_devices import RgbCameraStream
 
 from config import CameraConfig
 
@@ -41,9 +41,7 @@ class CameraStream:
 
     @property
     def rotation_degrees(self) -> int:
-        if self._capture is not None and self._capture.backend == OAK_RGB_BACKEND:
-            return 0
-        return self._config.rotation_degrees
+        return 0
 
     def start(self) -> None:
         if self.is_open:

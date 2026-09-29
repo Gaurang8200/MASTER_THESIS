@@ -27,12 +27,17 @@ class FrankaConfig:
     pick_heights: dict[int, float]
     place_heights: dict[int, float]
     default_orientation: tuple[float, float, float, float]
+    calibration_directory: Path
     calibration_width: int
     calibration_height: int
     mirror_x: bool
     workspace_x: tuple[float, float]
     workspace_y: tuple[float, float]
     workspace_z: tuple[float, float]
+    depth_bbox_inset_ratio: float
+    depth_support_ring_scale: float
+    depth_minimum_valid_pixels: int
+    depth_maximum_height_m: float
     zones: dict[str, CartesianPose]
 
     def pick_height(self, object_class: int) -> float:
@@ -61,6 +66,9 @@ def _float_tuple(value: Any, size: int, name: str) -> tuple[float, ...]:
 
 def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
     data = json.loads(path.read_text(encoding="utf-8"))
+    calibration_directory = Path(str(data["calibration_directory"]))
+    if not calibration_directory.is_absolute():
+        calibration_directory = PROJECT_ROOT / "src" / "FR_franka" / calibration_directory
     zones = {
         name: CartesianPose.create(value["translation"], value["quaternion"])
         for name, value in data.get("zones", {}).items()
@@ -84,12 +92,17 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
         default_orientation=_float_tuple(
             data["default_orientation"], 4, "default_orientation"
         ),
+        calibration_directory=calibration_directory,
         calibration_width=int(data["calibration_image_size"][0]),
         calibration_height=int(data["calibration_image_size"][1]),
         mirror_x=bool(data["mirror_x"]),
         workspace_x=_float_tuple(data["workspace"]["x"], 2, "workspace.x"),
         workspace_y=_float_tuple(data["workspace"]["y"], 2, "workspace.y"),
         workspace_z=_float_tuple(data["workspace"]["z"], 2, "workspace.z"),
+        depth_bbox_inset_ratio=float(data["depth"]["bbox_inset_ratio"]),
+        depth_support_ring_scale=float(data["depth"]["support_ring_scale"]),
+        depth_minimum_valid_pixels=int(data["depth"]["minimum_valid_pixels"]),
+        depth_maximum_height_m=float(data["depth"]["maximum_height_m"]),
         zones=zones,
     )
     _validate_config(config)
@@ -103,6 +116,14 @@ def _validate_config(config: FrankaConfig) -> None:
         raise ValueError("dynamics_factor must be between zero and one")
     if config.calibration_width <= 0 or config.calibration_height <= 0:
         raise ValueError("calibration image dimensions must be positive")
+    if not 0.0 <= config.depth_bbox_inset_ratio < 0.5:
+        raise ValueError("depth bbox inset ratio must be below one half")
+    if config.depth_support_ring_scale <= 1.0:
+        raise ValueError("depth support ring scale must be greater than one")
+    if config.depth_minimum_valid_pixels <= 0:
+        raise ValueError("depth minimum valid pixels must be positive")
+    if config.depth_maximum_height_m <= 0.0:
+        raise ValueError("depth maximum height must be positive")
     for lower, upper in (config.workspace_x, config.workspace_y, config.workspace_z):
         if lower >= upper:
             raise ValueError("workspace lower limit must be below its upper limit")

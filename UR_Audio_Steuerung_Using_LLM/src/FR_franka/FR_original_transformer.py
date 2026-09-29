@@ -14,14 +14,18 @@ from .FR_models import CartesianPose, PixelPoint, RobotPoint
 from .FR_original_calibration import FR_function_pool as function_pool, pixel2robot
 
 
-CALIBRATION_DIR = Path(__file__).resolve().parent / "FR_original_calibration"
 _CALIBRATION_LOCK = threading.Lock()
+REQUIRED_CALIBRATION_FILES = (
+    "output_wp2camera.json",
+    "output_c2f.json",
+    "robot_poses.json",
+)
 
 
 @contextmanager
-def _calibration_working_directory() -> Iterator[None]:
+def _calibration_working_directory(calibration_directory: Path) -> Iterator[None]:
     previous_directory = Path.cwd()
-    os.chdir(CALIBRATION_DIR)
+    os.chdir(calibration_directory)
     try:
         yield
     finally:
@@ -33,6 +37,7 @@ class OriginalFrankaPixelTransformer:
         self,
         calibration_size: tuple[int, int],
         mirror_x: bool,
+        calibration_directory: Path,
         pose_index: int = 15,
     ) -> None:
         width, height = calibration_size
@@ -43,6 +48,8 @@ class OriginalFrankaPixelTransformer:
         self._calibration_size = calibration_size
         self._mirror_x = mirror_x
         self._pose_index = pose_index
+        self._calibration_directory = calibration_directory.resolve()
+        self._validate_calibration_files()
 
     def transform(
         self,
@@ -60,7 +67,9 @@ class OriginalFrankaPixelTransformer:
             raise ValueError("pixel x is outside the calibrated image")
         if not 0.0 <= scaled_y < self._calibration_size[1]:
             raise ValueError("pixel y is outside the calibrated image")
-        with _CALIBRATION_LOCK, _calibration_working_directory():
+        with _CALIBRATION_LOCK, _calibration_working_directory(
+            self._calibration_directory
+        ):
             x_robot, y_robot, z_robot = pixel2robot(
                 scaled_x,
                 scaled_y,
@@ -69,7 +78,9 @@ class OriginalFrankaPixelTransformer:
         return RobotPoint(float(x_robot), float(y_robot), float(z_robot))
 
     def calibration_pose(self) -> CartesianPose:
-        with _CALIBRATION_LOCK, _calibration_working_directory():
+        with _CALIBRATION_LOCK, _calibration_working_directory(
+            self._calibration_directory
+        ):
             transforms, _ = function_pool.read_bTf("robot_poses.json")
         if self._pose_index >= len(transforms):
             raise ValueError(f"calibration pose {self._pose_index} does not exist")
@@ -78,3 +89,15 @@ class OriginalFrankaPixelTransformer:
             transform[:3, 3] / 1000.0,
             rotation_matrix_to_quaternion(transform[:3, :3]),
         )
+
+    def _validate_calibration_files(self) -> None:
+        missing = [
+            name
+            for name in REQUIRED_CALIBRATION_FILES
+            if not (self._calibration_directory / name).is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                "Dedicated OAK D calibration files are missing from "
+                f"{self._calibration_directory}: {missing}"
+            )
