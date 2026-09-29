@@ -9,11 +9,8 @@
   "approach_height_mm": 500.0,
   "camera_offset_mm": [0.0, 0.0, 0.0],
   "lift_height_mm": 200.0,
-  "pick_heights_mm": {
-    "0": 50.0,
-    "1": 30.0,
-    "2": 20.0
-  },
+  "table_surface_z_mm": 0.0,
+  "grip_offset_below_surface_mm": 10.0,
   "place_heights_mm": {
     "0": 67.0,
     "1": 48.0,
@@ -25,8 +22,9 @@
   "mirror_x": false,
   "depth": {
     "bbox_inset_ratio": 0.25,
-    "support_ring_scale": 1.6,
+    "table_ring_scale": 1.6,
     "minimum_valid_pixels": 25,
+    "table_depth_tolerance_mm": 10.0,
     "maximum_height_mm": 250.0
   },
   "workspace_mm": {

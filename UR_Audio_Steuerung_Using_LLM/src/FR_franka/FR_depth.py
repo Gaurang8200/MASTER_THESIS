@@ -10,21 +10,22 @@ import numpy as np
 @dataclass(frozen=True)
 class DepthMeasurement:
     object_depth_mm: float
-    support_depth_mm: float
+    table_depth_mm: float
     height_mm: float
     object_sample_count: int
-    support_sample_count: int
-    object_depth_source: str
+    table_sample_count: int
+    table_depth_min_mm: float
+    table_depth_max_mm: float
 
 
 def measure_object_height(
     depth_path: Path,
     bbox: Sequence[float],
     inset_ratio: float,
-    support_ring_scale: float,
+    table_ring_scale: float,
     minimum_valid_pixels: int,
+    table_depth_tolerance_mm: float,
     maximum_height_mm: float,
-    fallback_object_depth_mm: float | None = None,
 ) -> DepthMeasurement:
     if not depth_path.is_file():
         raise FileNotFoundError(f"OAK D depth capture does not exist: {depth_path}")
@@ -35,10 +36,12 @@ def measure_object_height(
         raise ValueError("Selected object bounding box must contain four values")
     if not 0.0 <= inset_ratio < 0.5:
         raise ValueError("Depth bounding box inset ratio must be below one half")
-    if support_ring_scale <= 1.0:
-        raise ValueError("Depth support ring scale must be greater than one")
+    if table_ring_scale <= 1.0:
+        raise ValueError("Depth table ring scale must be greater than one")
     if minimum_valid_pixels <= 0:
         raise ValueError("Depth minimum valid pixels must be positive")
+    if table_depth_tolerance_mm <= 0.0:
+        raise ValueError("Depth table tolerance must be positive")
 
     height, width = depth.shape
     x1, y1, x2, y2 = _clamped_box(bbox, width, height)
@@ -50,8 +53,8 @@ def measure_object_height(
         depth[y1 + inset_y:y2 - inset_y, x1 + inset_x:x2 - inset_x]
     )
 
-    expanded_width = box_width * support_ring_scale
-    expanded_height = box_height * support_ring_scale
+    expanded_width = box_width * table_ring_scale
+    expanded_height = box_height * table_ring_scale
     center_x = (x1 + x2) / 2.0
     center_y = (y1 + y2) / 2.0
     outer = _clamped_box(
@@ -68,31 +71,32 @@ def measure_object_height(
     ring = depth[oy1:oy2, ox1:ox2]
     ring_mask = np.ones(ring.shape, dtype=bool)
     ring_mask[y1 - oy1:y2 - oy1, x1 - ox1:x2 - ox1] = False
-    support_values = _valid_depth_values(ring[ring_mask])
+    table_values = _valid_depth_values(ring[ring_mask])
 
-    if support_values.size < minimum_valid_pixels:
+    if table_values.size < minimum_valid_pixels:
         raise ValueError(
-            f"OAK D support ring has only {support_values.size} valid depth pixels"
+            f"OAK D table ring has only {table_values.size} valid depth pixels"
         )
 
-    if object_values.size >= minimum_valid_pixels:
-        object_depth_mm = float(np.median(object_values))
-        object_depth_source = "object_bbox"
-    elif (
-        fallback_object_depth_mm is not None
-        and 100.0 <= fallback_object_depth_mm <= 10000.0
-    ):
-        object_depth_mm = float(fallback_object_depth_mm)
-        object_depth_source = "gesture_point"
-    else:
+    if object_values.size < minimum_valid_pixels:
         raise ValueError(
             f"OAK D object area has only {object_values.size} valid depth pixels"
         )
-    support_depth_mm = float(np.median(support_values))
-    height_mm = support_depth_mm - object_depth_mm
+    object_depth_mm = float(np.median(object_values))
+    table_depth_mm = float(np.median(table_values))
+    table_depth_min_mm = float(np.min(table_values))
+    table_depth_max_mm = float(np.max(table_values))
+    if np.any(np.abs(table_values - table_depth_mm) > table_depth_tolerance_mm):
+        raise ValueError(
+            "OAK D surrounding table depth is not stable: "
+            f"range {table_depth_min_mm:.1f} to {table_depth_max_mm:.1f} mm is "
+            f"outside {table_depth_mm:.1f} plus or minus "
+            f"{table_depth_tolerance_mm:.1f} mm"
+        )
+    height_mm = table_depth_mm - object_depth_mm
     if height_mm < 0.0:
         raise ValueError(
-            "OAK D measured the selected object behind the surrounding support surface"
+            "OAK D measured the selected object behind the table surface"
         )
     if height_mm > maximum_height_mm:
         raise ValueError(
@@ -100,11 +104,12 @@ def measure_object_height(
         )
     return DepthMeasurement(
         object_depth_mm=object_depth_mm,
-        support_depth_mm=support_depth_mm,
+        table_depth_mm=table_depth_mm,
         height_mm=height_mm,
         object_sample_count=int(object_values.size),
-        support_sample_count=int(support_values.size),
-        object_depth_source=object_depth_source,
+        table_sample_count=int(table_values.size),
+        table_depth_min_mm=table_depth_min_mm,
+        table_depth_max_mm=table_depth_max_mm,
     )
 
 

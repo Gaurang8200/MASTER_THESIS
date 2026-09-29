@@ -70,12 +70,12 @@ class OriginalFrankaPixelTransformer:
         with _CALIBRATION_LOCK, _calibration_working_directory(
             self._calibration_directory
         ):
-            x_robot, y_robot, z_robot = pixel2robot(
+            x_robot, y_robot = pixel2robot(
                 scaled_x,
                 scaled_y,
                 self._pose_index,
             )
-        return RobotPoint(float(x_robot), float(y_robot), float(z_robot))
+        return RobotPoint(float(x_robot), float(y_robot), 0.0)
 
     def calibration_pose(self) -> CartesianPose:
         with _CALIBRATION_LOCK, _calibration_working_directory(

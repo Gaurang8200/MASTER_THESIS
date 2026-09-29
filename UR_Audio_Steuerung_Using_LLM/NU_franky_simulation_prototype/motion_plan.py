@@ -39,7 +39,9 @@ def build_motion_plan(
         (
             scene.object_x_mm,
             scene.object_y_mm,
-            config.pick_height_mm(scene.object_class),
+            config.table_surface_z_mm
+            + 2.0 * scene.object_half_height_mm
+            - config.grip_offset_below_surface_mm,
         ),
         orientation,
     )

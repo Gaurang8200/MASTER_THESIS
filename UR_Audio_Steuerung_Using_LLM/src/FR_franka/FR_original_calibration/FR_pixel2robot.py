@@ -9,7 +9,8 @@ import numpy as np
 # Eigene Module
 from . import FR_function_pool as fp
 
-def pixel2robot(cordx, cordy, nr):
+
+def pixel2robot(cordx: float, cordy: float, nr: int) -> tuple[float, float]:
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
     input_name = "output_wp2camera.json"
@@ -28,12 +29,9 @@ def pixel2robot(cordx, cordy, nr):
 
     result, bTc, rot_c2p, trans_c2p, bTp, Spitze_mat = fp.calc_pixel2robot(tvec, rvec, camera_matrix, bTf_i, fTc, pixel_coords, nr, False)#printout results False
     #print(result.shape)
-    print("pixel2robot result in mm:")
-    print(result)
+    x_robot = float(result[0, 0])
+    y_robot = float(result[1, 0])
+    print(f"pixel2robot result: x={x_robot:.2f} mm, y={y_robot:.2f} mm")
 
-    x_robot = result[0, 0]
-    y_robot = result[1, 0]
-    z_robot = 300.0
-
-    return x_robot, y_robot, z_robot
+    return x_robot, y_robot
 

@@ -69,6 +69,9 @@ class OakDepthPipelineTests(unittest.TestCase):
         config = json.loads(config_path.read_text(encoding="utf-8"))
         self.assertEqual(OAK_MONO_RESOLUTION, (1280, 720))
         self.assertEqual(config["calibration_image_size"], [1280, 720])
+        self.assertNotIn("pick_heights_mm", config)
+        self.assertEqual(config["table_surface_z_mm"], 0.0)
+        self.assertEqual(config["grip_offset_below_surface_mm"], 10.0)
 
     def test_franka_capture_and_gesture_use_calibration_resolution(self) -> None:
         detector_root = AUDIO_ROOT / "Code-YOLOv5-Windows_llm"
@@ -101,9 +104,10 @@ class OakDepthPipelineTests(unittest.TestCase):
         self.assertNotIn("left_mono_center", mapped[0])
         self.assertIn("valid depth pixels", mapped[0]["left_mono_mapping_error"])
 
-    def test_height_uses_object_and_support_medians(self) -> None:
-        depth = np.full((100, 100), 700, dtype=np.uint16)
-        depth[30:70, 30:70] = 620
+    def test_height_uses_object_and_stable_table_depth(self) -> None:
+        depth = np.full((100, 100), 500, dtype=np.uint16)
+        depth[30:70, 30:70] = 450
+        depth[20:22, 20:22] = 495
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "depth.npy"
             np.save(path, depth, allow_pickle=False)
@@ -111,13 +115,33 @@ class OakDepthPipelineTests(unittest.TestCase):
                 path,
                 (30, 30, 70, 70),
                 inset_ratio=0.25,
-                support_ring_scale=1.6,
+                table_ring_scale=1.6,
                 minimum_valid_pixels=25,
+                table_depth_tolerance_mm=10.0,
                 maximum_height_mm=250.0,
             )
-        self.assertEqual(measurement.object_depth_mm, 620.0)
-        self.assertEqual(measurement.support_depth_mm, 700.0)
-        self.assertAlmostEqual(measurement.height_mm, 80.0)
+        self.assertEqual(measurement.object_depth_mm, 450.0)
+        self.assertEqual(measurement.table_depth_mm, 500.0)
+        self.assertEqual(measurement.height_mm, 50.0)
+        self.assertEqual(0.0 + measurement.height_mm - 10.0, 40.0)
+
+    def test_unstable_surrounding_table_depth_is_rejected(self) -> None:
+        depth = np.full((100, 100), 500, dtype=np.uint16)
+        depth[30:70, 30:70] = 450
+        depth[20, 20] = 530
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "depth.npy"
+            np.save(path, depth, allow_pickle=False)
+            with self.assertRaisesRegex(ValueError, "table depth is not stable"):
+                measure_object_height(
+                    path,
+                    (30, 30, 70, 70),
+                    0.25,
+                    1.6,
+                    25,
+                    10.0,
+                    250.0,
+                )
 
     def test_invalid_depth_fails_closed(self) -> None:
         depth = np.zeros((40, 40), dtype=np.uint16)
@@ -125,7 +149,15 @@ class OakDepthPipelineTests(unittest.TestCase):
             path = Path(directory) / "depth.npy"
             np.save(path, depth, allow_pickle=False)
             with self.assertRaisesRegex(ValueError, "valid depth pixels"):
-                measure_object_height(path, (10, 10, 30, 30), 0.2, 1.5, 5, 250.0)
+                measure_object_height(
+                    path,
+                    (10, 10, 30, 30),
+                    0.2,
+                    1.5,
+                    5,
+                    10.0,
+                    250.0,
+                )
 
     def test_only_oak_camera_options_are_accepted(self) -> None:
         self.assertEqual(parse_camera_option("oak_d:device_1"), "device_1")
@@ -153,7 +185,7 @@ class OakDepthPipelineTests(unittest.TestCase):
         point = transformer.transform(PixelPoint(372.0, 200.0), (640, 400))
         self.assertAlmostEqual(point.x, 402.11, places=2)
         self.assertAlmostEqual(point.y, 404.88, places=2)
-        self.assertEqual(point.z, 300.0)
+        self.assertEqual(point.z, 0.0)
 
 
 if __name__ == "__main__":

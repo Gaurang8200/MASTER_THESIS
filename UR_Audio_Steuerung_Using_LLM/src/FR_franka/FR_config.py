@@ -24,7 +24,8 @@ class FrankaConfig:
     approach_height_mm: float
     camera_offset_mm: tuple[float, float, float]
     lift_height_mm: float
-    pick_heights_mm: dict[int, float]
+    table_surface_z_mm: float
+    grip_offset_below_surface_mm: float
     place_heights_mm: dict[int, float]
     default_orientation: tuple[float, float, float, float]
     calibration_directory: Path
@@ -35,15 +36,11 @@ class FrankaConfig:
     workspace_y_mm: tuple[float, float]
     workspace_z_mm: tuple[float, float]
     depth_bbox_inset_ratio: float
-    depth_support_ring_scale: float
+    depth_table_ring_scale: float
     depth_minimum_valid_pixels: int
+    depth_table_tolerance_mm: float
     depth_maximum_height_mm: float
     zones: dict[str, CartesianPose]
-
-    def pick_height_mm(self, object_class: int) -> float:
-        if object_class not in self.pick_heights_mm:
-            raise ValueError(f"No Franka pick height exists for object class {object_class}")
-        return self.pick_heights_mm[object_class]
 
     def place_height_mm(self, object_class: int) -> float:
         if object_class not in self.place_heights_mm:
@@ -89,9 +86,8 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
             data["camera_offset_mm"], 3, "camera_offset_mm"
         ),
         lift_height_mm=float(data["lift_height_mm"]),
-        pick_heights_mm={
-            int(key): float(value) for key, value in data["pick_heights_mm"].items()
-        },
+        table_surface_z_mm=float(data["table_surface_z_mm"]),
+        grip_offset_below_surface_mm=float(data["grip_offset_below_surface_mm"]),
         place_heights_mm={
             int(key): float(value) for key, value in data["place_heights_mm"].items()
         },
@@ -112,8 +108,9 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
             data["workspace_mm"]["z"], 2, "workspace_mm.z"
         ),
         depth_bbox_inset_ratio=float(data["depth"]["bbox_inset_ratio"]),
-        depth_support_ring_scale=float(data["depth"]["support_ring_scale"]),
+        depth_table_ring_scale=float(data["depth"]["table_ring_scale"]),
         depth_minimum_valid_pixels=int(data["depth"]["minimum_valid_pixels"]),
+        depth_table_tolerance_mm=float(data["depth"]["table_depth_tolerance_mm"]),
         depth_maximum_height_mm=float(data["depth"]["maximum_height_mm"]),
         zones=zones,
     )
@@ -130,12 +127,16 @@ def _validate_config(config: FrankaConfig) -> None:
         raise ValueError("calibration image dimensions must be positive")
     if not 0.0 <= config.depth_bbox_inset_ratio < 0.5:
         raise ValueError("depth bbox inset ratio must be below one half")
-    if config.depth_support_ring_scale <= 1.0:
-        raise ValueError("depth support ring scale must be greater than one")
+    if config.depth_table_ring_scale <= 1.0:
+        raise ValueError("depth table ring scale must be greater than one")
     if config.depth_minimum_valid_pixels <= 0:
         raise ValueError("depth minimum valid pixels must be positive")
+    if config.depth_table_tolerance_mm <= 0.0:
+        raise ValueError("depth table tolerance must be positive")
     if config.gripper_speed_mm_s <= 0.0:
         raise ValueError("gripper speed must be positive")
+    if config.grip_offset_below_surface_mm <= 0.0:
+        raise ValueError("grip offset below surface must be positive")
     if config.depth_maximum_height_mm <= 0.0:
         raise ValueError("depth maximum height must be positive")
     for lower, upper in (
@@ -145,6 +146,12 @@ def _validate_config(config: FrankaConfig) -> None:
     ):
         if lower >= upper:
             raise ValueError("workspace lower limit must be below its upper limit")
+    if not (
+        config.workspace_z_mm[0]
+        <= config.table_surface_z_mm
+        <= config.workspace_z_mm[1]
+    ):
+        raise ValueError("table surface Z is outside the workspace")
     for name, pose in config.zones.items():
         x, y, z = pose.translation
         if not config.workspace_x_mm[0] <= x <= config.workspace_x_mm[1]:

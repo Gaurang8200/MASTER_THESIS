@@ -216,12 +216,10 @@ class FrankaAudioWorkflow:
                 Path(str(depth_path_value)),
                 data["original_bbox"],
                 self._config.depth_bbox_inset_ratio,
-                self._config.depth_support_ring_scale,
+                self._config.depth_table_ring_scale,
                 self._config.depth_minimum_valid_pixels,
+                self._config.depth_table_tolerance_mm,
                 self._config.depth_maximum_height_mm,
-                float(data["object_depth_mm"])
-                if data.get("object_depth_mm") is not None
-                else None,
             )
         elif not self._simulation:
             raise FileNotFoundError("Selected object has no synchronized OAK D depth capture")
@@ -229,18 +227,19 @@ class FrankaAudioWorkflow:
             "FRANKA COORDINATES: "
             f"x={self._context.selected_point.x:.2f} mm, "
             f"y={self._context.selected_point.y:.2f} mm, "
-            f"z={self._context.selected_point.z:.2f} mm"
+            f"table_z={self._config.table_surface_z_mm:.2f} mm"
         )
         if self._context.depth_measurement is not None:
             measurement = self._context.depth_measurement
             self._output(
                 "OAK D DEPTH: "
                 f"object={measurement.object_depth_mm:.1f} mm, "
-                f"support={measurement.support_depth_mm:.1f} mm, "
+                f"table={measurement.table_depth_mm:.1f} mm, "
                 f"height={measurement.height_mm:.1f} mm, "
-                f"source={measurement.object_depth_source}, "
+                f"table_range={measurement.table_depth_min_mm:.1f} to "
+                f"{measurement.table_depth_max_mm:.1f} mm, "
                 f"object_samples={measurement.object_sample_count}, "
-                f"support_samples={measurement.support_sample_count}"
+                f"table_samples={measurement.table_sample_count}"
             )
 
     def _move_above_selected_object(self) -> None:
@@ -311,15 +310,18 @@ class FrankaAudioWorkflow:
 
     def _move_to_pick(self) -> None:
         point = self._require_selected_point()
-        object_class = self._require_selected_class()
         orientation = self._context.selected_orientation or self._config.default_orientation
-        base_pick_height = self._config.pick_height_mm(object_class)
-        height_correction = (
-            self._context.depth_measurement.height_mm
-            if self._context.depth_measurement is not None
-            else 0.0
-        )
-        pick_height = base_pick_height + height_correction
+        measurement = self._context.depth_measurement
+        if measurement is None:
+            raise RuntimeError("OAK D depth measurement is required for pickup")
+        grip_offset = self._config.grip_offset_below_surface_mm
+        if measurement.height_mm <= grip_offset:
+            raise ValueError(
+                f"OAK D object height {measurement.height_mm:.1f} mm must exceed "
+                f"the grip offset {grip_offset:.1f} mm"
+            )
+        object_surface_z = self._config.table_surface_z_mm + measurement.height_mm
+        pick_height = object_surface_z - grip_offset
         self._validate_workspace((point.x, point.y, pick_height))
         alignment_height = max(self._config.lift_height_mm, pick_height)
         self._output("FRANKA GRIPPER: Opening before pickup approach")
@@ -336,10 +338,18 @@ class FrankaAudioWorkflow:
             orientation,
         )
         self._output(
+            "OAK D GRIP TARGET: "
+            f"camera_depth={measurement.object_depth_mm + grip_offset:.1f} mm, "
+            f"object_depth={measurement.object_depth_mm:.1f} mm, "
+            f"grip_offset={grip_offset:.1f} mm"
+        )
+        self._output(
             "FRANKA PICK COORDINATES: "
             f"x={point.x:.2f} mm, y={point.y:.2f} mm, "
-            f"z={pick_height:.2f} mm, base_z={base_pick_height:.2f} mm, "
-            f"depth_correction={height_correction:.2f} mm"
+            f"z={pick_height:.2f} mm, "
+            f"table_z={self._config.table_surface_z_mm:.2f} mm, "
+            f"object_height={measurement.height_mm:.2f} mm, "
+            f"grip_offset={grip_offset:.2f} mm"
         )
         self._move_cartesian(
             point.x,
