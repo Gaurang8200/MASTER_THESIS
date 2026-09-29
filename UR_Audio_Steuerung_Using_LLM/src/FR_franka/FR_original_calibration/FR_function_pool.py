@@ -421,7 +421,7 @@ def camera_base_calibration(tvec: np.array, rvec, NoP, bTf_i, fTc):
     average2 = np.dot(bTcb_i, np.linalg.pinv(cTcb_i_2))
     print("average2: \n", average2)
 
-def calc_pixel2robot(tvec, rvec, camera_mat, bTf, fTc, pixel_coords, nr, output_name, printout):
+def calc_pixel2robot(tvec, rvec, camera_mat, bTf, fTc, pixel_coords, nr, printout):
     np.set_printoptions(precision=5)
     np.set_printoptions(suppress=True)
 
@@ -492,8 +492,6 @@ def calc_pixel2robot(tvec, rvec, camera_mat, bTf, fTc, pixel_coords, nr, output_
         print("result4: \n", result4)
 
     # output_json = {"bTc"+str(nr): trans_result.tolist(), "fTs": Spitze_mat.tolist(), "rot_c2p": rot_mat.tolist(), "trans_c2p": xp_yp_zc.tolist(), "bTp": result2.tolist()}
-    # with open(output_name, "w") as f :
-    #     json.dump(output_json, f, separators=(", ", ":"), indent=2)
 
     return result, trans_result, rot_mat, xp_yp_zc, result2, Spitze_mat
 

@@ -12,7 +12,7 @@ AUDIO_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
-from src.camera_devices import RgbCameraStream
+from src.camera_devices import RgbCameraStream, map_detections_to_left_mono
 
 # === Configuration Constants ===
 SAVE_DIRECTORY = 'photos'
@@ -82,6 +82,7 @@ class MultiObjectDetector:
         self.detected_objects = []
         self.object_selection_data = {}
         self.last_detection_result = {}
+        self.last_rgbd_frame = None
     
     def capture_image(self, filename="photo_1.jpg"):
         """Capture image from camera"""
@@ -94,6 +95,7 @@ class MultiObjectDetector:
             if rgbd_frame is None:
                 raise RuntimeError("Failed to capture synchronized OAK D RGB and depth")
             frame = rgbd_frame.color
+            self.last_rgbd_frame = rgbd_frame
 
             actual_height, actual_width = frame.shape[:2]
             robot_type = os.environ.get("ROBOT_TYPE", "universal").strip().lower()
@@ -213,6 +215,15 @@ class MultiObjectDetector:
                     data = json.load(f)
                 
                 self.detected_objects = data.get('objects', [])
+                if self.last_rgbd_frame is not None:
+                    self.detected_objects = map_detections_to_left_mono(
+                        self.detected_objects,
+                        self.last_rgbd_frame,
+                    )
+                    data['objects'] = self.detected_objects
+                    data.setdefault('metadata', {})['coordinate_frame'] = 'oak_d_left_mono'
+                    with open(json_path, 'w', encoding='utf-8') as result_file:
+                        json.dump(data, result_file, indent=2)
                 print(f"DEBUG: Loaded {len(self.detected_objects)} objects from JSON")
                 
                 # Create object selection data

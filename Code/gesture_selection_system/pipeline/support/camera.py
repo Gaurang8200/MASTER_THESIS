@@ -20,7 +20,7 @@ AUDIO_PROJECT_ROOT = REPOSITORY_ROOT / "UR_Audio_Steuerung_Using_LLM"
 if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
-from src.camera_devices import RgbCameraStream
+from src.camera_devices import OakDFrame, RgbCameraStream, median_depth_for_bbox
 
 from config import CameraConfig
 
@@ -33,6 +33,7 @@ class CameraStream:
     def __init__(self, config: CameraConfig) -> None:
         self._config = config
         self._capture: RgbCameraStream | None = None
+        self._latest_frame: OakDFrame | None = None
         self._consecutive_failures = 0
 
     @property
@@ -59,16 +60,35 @@ class CameraStream:
         """Return the next frame or None when the grab failed."""
         if self._capture is None:
             raise RuntimeError("CameraStream.start must be called before read")
-        frame = self._capture.read()
-        if frame is None:
+        rgbd_frame = self._capture.read_rgbd()
+        if rgbd_frame is None:
             self._consecutive_failures += 1
             return None
+        self._latest_frame = rgbd_frame
+        frame = rgbd_frame.color
         self._consecutive_failures = 0
         if self.rotation_degrees == 180:
             frame = cv2.rotate(frame, cv2.ROTATE_180)
         if self._config.flip_horizontal:
             frame = cv2.flip(frame, 1)
         return frame
+
+    def project_sensor_point_to_left(
+        self,
+        point: tuple[float, float],
+    ) -> tuple[tuple[float, float], float, tuple[int, int]]:
+        if self._latest_frame is None:
+            raise RuntimeError("OAK D frame geometry is not available")
+        x_value, y_value = point
+        depth_mm = median_depth_for_bbox(
+            self._latest_frame.depth_mm,
+            [x_value - 5.0, y_value - 5.0, x_value + 5.0, y_value + 5.0],
+            inset_ratio=0.0,
+            minimum_valid_pixels=5,
+        )
+        left_point = self._latest_frame.project_rgb_point_to_left(point, depth_mm)
+        left_height, left_width = self._latest_frame.left_mono.shape[:2]
+        return left_point, depth_mm, (left_width, left_height)
 
     def to_sensor_point(
         self,
@@ -108,6 +128,7 @@ class CameraStream:
         if self._capture is not None:
             self._capture.close()
             self._capture = None
+            self._latest_frame = None
             LOGGER.info("camera_closed")
 
     def __enter__(self) -> "CameraStream":

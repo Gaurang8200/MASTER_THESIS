@@ -4,6 +4,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 
@@ -13,13 +15,68 @@ AUDIO_ROOT = REPOSITORY_ROOT / "UR_Audio_Steuerung_Using_LLM"
 if str(AUDIO_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_ROOT))
 
-from src.camera_devices import parse_camera_option
+from src.camera_devices import (
+    OakDFrame,
+    map_detections_to_left_mono,
+    parse_camera_option,
+)
 from src.FR_franka.FR_depth import measure_object_height
 from src.FR_franka.FR_models import PixelPoint
 from src.FR_franka.FR_original_transformer import OriginalFrankaPixelTransformer
 
 
 class OakDepthPipelineTests(unittest.TestCase):
+    def test_rgb_point_maps_to_left_mono_with_same_depth(self) -> None:
+        class RgbTransformation:
+            def projectPointTo(
+                self,
+                target: object,
+                point: Any,
+                depth: float,
+            ) -> SimpleNamespace:
+                self.target = target
+                self.point = point
+                self.depth = depth
+                return SimpleNamespace(x=372.0, y=200.0)
+
+        rgb_transformation = RgbTransformation()
+        left_transformation = object()
+        frame = OakDFrame(
+            color=np.zeros((800, 1280, 3), dtype=np.uint8),
+            depth_mm=np.full((800, 1280), 620, dtype=np.uint16),
+            left_mono=np.zeros((400, 640), dtype=np.uint8),
+            rgb_transformation=rgb_transformation,
+            left_transformation=left_transformation,
+        )
+        mapped = map_detections_to_left_mono(
+            [{"center": [800.0, 420.0], "bbox": [700.0, 320.0, 900.0, 520.0]}],
+            frame,
+        )
+        self.assertEqual(mapped[0]["left_mono_center"], [372.0, 200.0])
+        self.assertEqual(mapped[0]["left_mono_frame_size"], [640, 400])
+        self.assertEqual(mapped[0]["object_depth_mm"], 620.0)
+        self.assertEqual(rgb_transformation.depth, 620.0)
+        self.assertEqual(
+            (rgb_transformation.point.x, rgb_transformation.point.y),
+            (800.0, 420.0),
+        )
+        self.assertIs(rgb_transformation.target, left_transformation)
+
+    def test_rgb_mapping_rejects_missing_object_depth(self) -> None:
+        frame = OakDFrame(
+            color=np.zeros((80, 128, 3), dtype=np.uint8),
+            depth_mm=np.zeros((80, 128), dtype=np.uint16),
+            left_mono=np.zeros((40, 64), dtype=np.uint8),
+            rgb_transformation=object(),
+            left_transformation=object(),
+        )
+        mapped = map_detections_to_left_mono(
+            [{"center": [80.0, 42.0], "bbox": [70.0, 32.0, 90.0, 52.0]}],
+            frame,
+        )
+        self.assertNotIn("left_mono_center", mapped[0])
+        self.assertIn("valid depth pixels", mapped[0]["left_mono_mapping_error"])
+
     def test_height_uses_object_and_support_medians(self) -> None:
         depth = np.full((100, 100), 700, dtype=np.uint16)
         depth[30:70, 30:70] = 620

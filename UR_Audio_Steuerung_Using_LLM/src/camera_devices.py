@@ -28,6 +28,86 @@ class CameraOption:
 class OakDFrame:
     color: np.ndarray
     depth_mm: np.ndarray
+    left_mono: np.ndarray
+    rgb_transformation: Any
+    left_transformation: Any
+
+    def project_rgb_point_to_left(
+        self,
+        point: tuple[float, float],
+        depth_mm: float,
+    ) -> tuple[float, float]:
+        if not np.isfinite(depth_mm) or depth_mm <= 0.0:
+            raise ValueError("OAK D projection requires a valid positive depth")
+        try:
+            import depthai as dai
+        except ImportError as error:
+            raise RuntimeError("DepthAI is required for OAK D projection") from error
+        projected = self.rgb_transformation.projectPointTo(
+            self.left_transformation,
+            dai.Point2f(float(point[0]), float(point[1])),
+            float(depth_mm),
+        )
+        left_height, left_width = self.left_mono.shape[:2]
+        if not 0.0 <= projected.x < left_width or not 0.0 <= projected.y < left_height:
+            raise ValueError("Projected left mono pixel is outside the calibration frame")
+        return float(projected.x), float(projected.y)
+
+
+def median_depth_for_bbox(
+    depth_mm: np.ndarray,
+    bbox: tuple[float, float, float, float] | list[float],
+    inset_ratio: float = 0.25,
+    minimum_valid_pixels: int = 25,
+) -> float:
+    if depth_mm.ndim != 2:
+        raise ValueError("OAK D depth map must be a two dimensional array")
+    if len(bbox) != 4:
+        raise ValueError("Object bounding box must contain four values")
+    if not 0.0 <= inset_ratio < 0.5:
+        raise ValueError("Depth bounding box inset ratio must be below one half")
+    height, width = depth_mm.shape
+    x1 = max(0, min(width - 1, int(round(float(bbox[0])))))
+    y1 = max(0, min(height - 1, int(round(float(bbox[1])))))
+    x2 = max(x1 + 1, min(width, int(round(float(bbox[2])))))
+    y2 = max(y1 + 1, min(height, int(round(float(bbox[3])))))
+    inset_x = int(round((x2 - x1) * inset_ratio))
+    inset_y = int(round((y2 - y1) * inset_ratio))
+    values = np.asarray(
+        depth_mm[y1 + inset_y:y2 - inset_y, x1 + inset_x:x2 - inset_x],
+        dtype=np.float64,
+    ).reshape(-1)
+    valid = values[(values >= 100.0) & (values <= 10000.0) & np.isfinite(values)]
+    if valid.size < minimum_valid_pixels:
+        raise ValueError(
+            f"OAK D object area has only {valid.size} valid depth pixels"
+        )
+    return float(np.median(valid))
+
+
+def map_detections_to_left_mono(
+    detections: list[dict[str, Any]],
+    frame: OakDFrame,
+) -> list[dict[str, Any]]:
+    mapped_detections: list[dict[str, Any]] = []
+    left_height, left_width = frame.left_mono.shape[:2]
+    for detection in detections:
+        mapped = dict(detection)
+        try:
+            bbox = [float(value) for value in detection["bbox"]]
+            center = [float(value) for value in detection["center"]]
+            object_depth_mm = median_depth_for_bbox(frame.depth_mm, bbox)
+            left_center = frame.project_rgb_point_to_left(
+                (center[0], center[1]),
+                object_depth_mm,
+            )
+            mapped["left_mono_center"] = [left_center[0], left_center[1]]
+            mapped["left_mono_frame_size"] = [left_width, left_height]
+            mapped["object_depth_mm"] = object_depth_mm
+        except (KeyError, RuntimeError, TypeError, ValueError) as error:
+            mapped["left_mono_mapping_error"] = str(error)
+        mapped_detections.append(mapped)
+    return mapped_detections
 
 
 def discover_oak_cameras() -> list[CameraOption]:
@@ -94,17 +174,25 @@ class RgbCameraStream:
             return None
         color_message = messages["rgb"]
         depth_message = messages["depth_aligned"]
-        if color_message is None or depth_message is None:
+        left_message = messages["left_mono"]
+        if color_message is None or depth_message is None or left_message is None:
             return None
         color = color_message.getCvFrame()
         depth_mm = depth_message.getFrame()
-        if color is None or depth_mm is None:
+        left_mono = left_message.getCvFrame()
+        if color is None or depth_mm is None or left_mono is None:
             return None
         if color.shape[:2] != depth_mm.shape[:2]:
             raise RuntimeError(
                 "OAK D aligned depth dimensions do not match the RGB frame"
             )
-        return OakDFrame(color=color, depth_mm=depth_mm)
+        return OakDFrame(
+            color=color,
+            depth_mm=depth_mm,
+            left_mono=left_mono,
+            rgb_transformation=color_message.getTransformation(),
+            left_transformation=left_message.getTransformation(),
+        )
 
     def close(self) -> None:
         pipeline = self._oak_pipeline
@@ -134,7 +222,6 @@ class RgbCameraStream:
             left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
             right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
             stereo = pipeline.create(dai.node.StereoDepth)
-            align = pipeline.create(dai.node.ImageAlign)
             sync = pipeline.create(dai.node.Sync)
             sync.setSyncThreshold(timedelta(milliseconds=34))
 
@@ -149,10 +236,16 @@ class RgbCameraStream:
             right_output = right.requestOutput(size=(640, 400), fps=15)
             left_output.link(stereo.left)
             right_output.link(stereo.right)
-            stereo.depth.link(align.input)
-            rgb_output.link(align.inputAlignTo)
             rgb_output.link(sync.inputs["rgb"])
-            align.outputAligned.link(sync.inputs["depth_aligned"])
+            left_output.link(sync.inputs["left_mono"])
+            if device.getPlatform() == dai.Platform.RVC4:
+                align = pipeline.create(dai.node.ImageAlign)
+                stereo.depth.link(align.input)
+                rgb_output.link(align.inputAlignTo)
+                align.outputAligned.link(sync.inputs["depth_aligned"])
+            else:
+                rgb_output.link(stereo.inputAlignTo)
+                stereo.depth.link(sync.inputs["depth_aligned"])
             queue = sync.out.createOutputQueue(maxSize=2, blocking=False)
             pipeline.start()
         except Exception:
