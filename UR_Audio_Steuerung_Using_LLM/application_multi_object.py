@@ -509,14 +509,17 @@ def _write_selection_data(info, gesture_result):
        live_bbox = live_object.get("bbox")
        if not isinstance(live_bbox, list) or len(live_bbox) != 4:
            raise ValueError("Gesture result has no live object bounding box")
+       live_center = live_object.get("center")
+       if not isinstance(live_center, list) or len(live_center) != 2:
+           raise ValueError("Gesture result has no live object center")
        selection_bbox = live_bbox
-       rgb_selection_pixel = gesture_result.get("fingertip_pixel")
+       rgb_selection_pixel = live_center
        left_mono_center = gesture_result.get("left_mono_pixel")
        left_mono_frame_size = [
            gesture_result.get("left_mono_frame_width"),
            gesture_result.get("left_mono_frame_height"),
        ]
-       object_depth_mm = gesture_result.get("fingertip_depth_mm")
+       object_depth_mm = gesture_result.get("object_depth_mm")
        mapping_error = gesture_result.get(
            "left_mono_mapping_error",
            "gesture point has no left mono mapping",
@@ -533,7 +536,7 @@ def _write_selection_data(info, gesture_result):
        raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
    if gesture_selection:
        print(
-           "OAK D GESTURE POINT: "
+           "OAK D SELECTED OBJECT: "
            f"rgb_u={float(rgb_selection_pixel[0]):.2f}, "
            f"rgb_v={float(rgb_selection_pixel[1]):.2f}, "
            f"depth={float(object_depth_mm):.1f} mm, "

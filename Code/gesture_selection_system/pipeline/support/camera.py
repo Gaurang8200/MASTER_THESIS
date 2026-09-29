@@ -82,15 +82,12 @@ class CameraStream:
             raise RuntimeError("OAK D frame geometry is not available")
         x_value, y_value = point
         if object_box is not None:
-            sample_boxes = [
-                (
-                    max(object_box[0], x_value - radius),
-                    max(object_box[1], y_value - radius),
-                    min(object_box[2], x_value + radius),
-                    min(object_box[3], y_value + radius),
-                )
-                for radius in (5.0, 12.0, 24.0, 48.0, 96.0)
-            ]
+            depth_mm = median_depth_for_bbox(
+                self._latest_frame.depth_mm,
+                object_box,
+                inset_ratio=0.25,
+                minimum_valid_pixels=5,
+            )
         else:
             sample_boxes = [
                 (
@@ -101,20 +98,20 @@ class CameraStream:
                 )
                 for radius in (5.0, 12.0, 24.0)
             ]
-        depth_error: ValueError | None = None
-        for sample_box in sample_boxes:
-            try:
-                depth_mm = median_depth_for_bbox(
-                    self._latest_frame.depth_mm,
-                    sample_box,
-                    inset_ratio=0.0,
-                    minimum_valid_pixels=5,
-                )
-                break
-            except ValueError as error:
-                depth_error = error
-        else:
-            raise depth_error or ValueError("OAK D has no valid depth near the point")
+            depth_error: ValueError | None = None
+            for sample_box in sample_boxes:
+                try:
+                    depth_mm = median_depth_for_bbox(
+                        self._latest_frame.depth_mm,
+                        sample_box,
+                        inset_ratio=0.0,
+                        minimum_valid_pixels=5,
+                    )
+                    break
+                except ValueError as error:
+                    depth_error = error
+            else:
+                raise depth_error or ValueError("OAK D has no valid depth near the point")
         left_point = self._latest_frame.project_rgb_point_to_left(point, depth_mm)
         left_height, left_width = self._latest_frame.left_mono.shape[:2]
         return left_point, depth_mm, (left_width, left_height)

@@ -84,6 +84,7 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
         "left_mono_frame_width": None,
         "left_mono_frame_height": None,
         "fingertip_depth_mm": None,
+        "object_depth_mm": None,
         "depth_path": None,
         "left_mono_mapping_error": None,
         "fingertip_confidence": None,
@@ -98,12 +99,14 @@ def _left_mono_payload(
     camera: CameraStream,
     sensor_point: tuple[float, float] | None,
     object_box: tuple[float, float, float, float] | None = None,
+    depth_field: str = "fingertip_depth_mm",
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "left_mono_pixel": None,
         "left_mono_frame_width": None,
         "left_mono_frame_height": None,
         "fingertip_depth_mm": None,
+        "object_depth_mm": None,
         "left_mono_mapping_error": None,
     }
     if sensor_point is None:
@@ -121,7 +124,7 @@ def _left_mono_payload(
             "left_mono_pixel": [left_point[0], left_point[1]],
             "left_mono_frame_width": left_size[0],
             "left_mono_frame_height": left_size[1],
-            "fingertip_depth_mm": depth_mm,
+            depth_field: depth_mm,
         }
     )
     return payload
@@ -328,7 +331,20 @@ def run_session(
                 if candidate is not None
                 else None
             )
-            mapping = _left_mono_payload(camera, sensor_center, sensor_object_box)
+            mapping_point = sensor_center
+            depth_field = "fingertip_depth_mm"
+            if selection_kind == "object" and sensor_object_box is not None:
+                mapping_point = (
+                    (sensor_object_box[0] + sensor_object_box[2]) / 2.0,
+                    (sensor_object_box[1] + sensor_object_box[3]) / 2.0,
+                )
+                depth_field = "object_depth_mm"
+            mapping = _left_mono_payload(
+                camera,
+                mapping_point,
+                sensor_object_box,
+                depth_field,
+            )
             mapping_ready = mapping["left_mono_mapping_error"] is None
             hold_confirmed = (
                 candidate_key is not None and hold.confirmed_key == candidate_key
