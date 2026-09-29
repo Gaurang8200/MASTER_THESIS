@@ -1547,23 +1547,15 @@ ttk.Radiobutton(left_frame, text="Linux", variable=platform_select, value="linux
 
 ttk.Label(left_frame, text="Select Microphone:").pack(pady=(10,0))
 try:
-   microphone_options, default_microphone_index = discover_input_microphones()
+   microphone_options, _ = discover_input_microphones()
 except Exception as error:
    print(f"MICROPHONE: Device discovery failed. {error}")
    microphone_options = []
-   default_microphone_index = None
 
 mic_mapping = {
    option.display_name: option.device_index for option in microphone_options
 }
-default_microphone_name = next(
-   (
-       option.display_name
-       for option in microphone_options
-       if option.device_index == default_microphone_index
-   ),
-   "No input microphone found",
-)
+default_microphone_name = "No input microphone found"
 mic_var = tk.StringVar(app, value=default_microphone_name)
 ttk.OptionMenu(
    left_frame,
