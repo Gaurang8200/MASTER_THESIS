@@ -1,16 +1,48 @@
 # MO_Changes
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import speech_recognition as sr
 
 
+GESTURE_ONLY_MICROPHONE = "No microphone, gesture only"
+
+
 @dataclass(frozen=True)
 class MicrophoneOption:
     device_index: int
     display_name: str
+
+
+def build_microphone_mapping(
+    options: Sequence[MicrophoneOption],
+) -> dict[str, int | None]:
+    mapping: dict[str, int | None] = {GESTURE_ONLY_MICROPHONE: None}
+    mapping.update({option.display_name: option.device_index for option in options})
+    return mapping
+
+
+def start_optional_background_listener(
+    device_index: int | None,
+    callback: Callable[[sr.Recognizer, sr.AudioData], None],
+    ambient_noise_seconds: float,
+    phrase_time_limit: float,
+) -> Callable[[bool], None] | None:
+    if device_index is None:
+        return None
+
+    recognizer = sr.Recognizer()
+    microphone = sr.Microphone(device_index=device_index)
+    with microphone as source:
+        recognizer.adjust_for_ambient_noise(source, duration=ambient_noise_seconds)
+    return recognizer.listen_in_background(
+        microphone,
+        callback,
+        phrase_time_limit=phrase_time_limit,
+    )
 
 
 def discover_input_microphones() -> tuple[list[MicrophoneOption], int | None]:
