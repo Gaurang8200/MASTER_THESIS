@@ -96,6 +96,7 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
 def _left_mono_payload(
     camera: CameraStream,
     sensor_point: tuple[float, float] | None,
+    object_box: tuple[float, float, float, float] | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "left_mono_pixel": None,
@@ -108,7 +109,8 @@ def _left_mono_payload(
         return payload
     try:
         left_point, depth_mm, left_size = camera.project_sensor_point_to_left(
-            sensor_point
+            sensor_point,
+            object_box,
         )
     except (RuntimeError, ValueError) as error:
         payload["left_mono_mapping_error"] = str(error)
@@ -311,7 +313,25 @@ def run_session(
             if selection_kind == "location" and center is not None and pointing_present:
                 candidate_key = place_grid_key(center)
             hold = timer.update(candidate_key, observed_at)
-            if hold.just_confirmed and candidate_key is not None:
+            sensor_object_box = (
+                camera.to_sensor_box(
+                    (
+                        candidate.box.x1,
+                        candidate.box.y1,
+                        candidate.box.x2,
+                        candidate.box.y2,
+                    ),
+                    frame.shape,
+                )
+                if candidate is not None
+                else None
+            )
+            mapping = _left_mono_payload(camera, sensor_center, sensor_object_box)
+            mapping_ready = mapping["left_mono_mapping_error"] is None
+            hold_confirmed = (
+                candidate_key is not None and hold.confirmed_key == candidate_key
+            )
+            if hold_confirmed and not selection_complete and mapping_ready:
                 selected = candidate
                 selection_complete = True
                 confirmed_key = candidate_key
@@ -325,7 +345,7 @@ def run_session(
                     "frame_width": int(frame.shape[1]),
                     "frame_height": int(frame.shape[0]),
                     "fingertip_pixel": [sensor_center[0], sensor_center[1]],
-                    **_left_mono_payload(camera, sensor_center),
+                    **mapping,
                     "fingertip_confidence": fingertip.confidence,
                     "pointing_finger_present": True,
                     "objects_considered": touch.considered if touch is not None else 0,
@@ -335,9 +355,28 @@ def run_session(
                         else None
                     ),
                     "hold_seconds": hold.held_s,
-                    "latency_ms": round((time.perf_counter() - frame_started) * 1000.0, 3),
+                    "latency_ms": round(
+                        (time.perf_counter() - frame_started) * 1000.0,
+                        3,
+                    ),
                 }
                 display_reason = "selected"
+                _write_json(result_file, result)
+            elif hold_confirmed and not selection_complete:
+                result = {
+                    **_base_result(session_id, "rejected", "depth_unavailable"),
+                    "frame_index": frame_index,
+                    "frame_width": int(frame.shape[1]),
+                    "frame_height": int(frame.shape[0]),
+                    "fingertip_pixel": [sensor_center[0], sensor_center[1]],
+                    **mapping,
+                    "fingertip_confidence": fingertip.confidence,
+                    "pointing_finger_present": True,
+                    "objects_considered": touch.considered if touch is not None else 0,
+                    "hold_seconds": hold.held_s,
+                    "latency_ms": round((time.perf_counter() - frame_started) * 1000.0, 3),
+                }
+                display_reason = "depth_unavailable"
                 _write_json(result_file, result)
             elif (
                 selection_complete
@@ -350,7 +389,7 @@ def run_session(
                     if sensor_center is not None
                     else None
                 )
-                result.update(_left_mono_payload(camera, sensor_center))
+                result.update(mapping)
                 result["last_seen_at_unix_s"] = time.time()
                 result["frame_index"] = frame_index
                 result["latency_ms"] = round(
