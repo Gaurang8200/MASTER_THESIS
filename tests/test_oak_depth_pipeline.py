@@ -107,6 +107,7 @@ class OakDepthPipelineTests(unittest.TestCase):
     def test_height_uses_object_and_stable_table_depth(self) -> None:
         depth = np.full((100, 100), 500, dtype=np.uint16)
         depth[30:70, 30:70] = 450
+        depth[18:25, 18:25] = 760
         depth[20:22, 20:22] = 495
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "depth.npy"
@@ -125,14 +126,14 @@ class OakDepthPipelineTests(unittest.TestCase):
         self.assertEqual(measurement.height_mm, 50.0)
         self.assertEqual(0.0 + measurement.height_mm - 10.0, 40.0)
 
-    def test_unstable_surrounding_table_depth_is_rejected(self) -> None:
+    def test_ambiguous_surrounding_depth_is_rejected(self) -> None:
         depth = np.full((100, 100), 500, dtype=np.uint16)
+        depth[:, 50:] = 760
         depth[30:70, 30:70] = 450
-        depth[20, 20] = 530
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "depth.npy"
             np.save(path, depth, allow_pickle=False)
-            with self.assertRaisesRegex(ValueError, "table depth is not stable"):
+            with self.assertRaisesRegex(ValueError, "no dominant table depth"):
                 measure_object_height(
                     path,
                     (30, 30, 70, 70),

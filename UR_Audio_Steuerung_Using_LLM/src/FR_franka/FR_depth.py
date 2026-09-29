@@ -83,16 +83,22 @@ def measure_object_height(
             f"OAK D object area has only {object_values.size} valid depth pixels"
         )
     object_depth_mm = float(np.median(object_values))
-    table_depth_mm = float(np.median(table_values))
-    table_depth_min_mm = float(np.min(table_values))
-    table_depth_max_mm = float(np.max(table_values))
-    if np.any(np.abs(table_values - table_depth_mm) > table_depth_tolerance_mm):
+    table_candidates = _dominant_depth_values(
+        table_values,
+        table_depth_tolerance_mm,
+    )
+    if (
+        table_candidates.size < minimum_valid_pixels
+        or table_candidates.size * 2 <= table_values.size
+    ):
         raise ValueError(
-            "OAK D surrounding table depth is not stable: "
-            f"range {table_depth_min_mm:.1f} to {table_depth_max_mm:.1f} mm is "
-            f"outside {table_depth_mm:.1f} plus or minus "
-            f"{table_depth_tolerance_mm:.1f} mm"
+            "OAK D surrounding area has no dominant table depth: "
+            f"largest group has {table_candidates.size} of "
+            f"{table_values.size} valid pixels"
         )
+    table_depth_mm = float(np.median(table_candidates))
+    table_depth_min_mm = float(np.min(table_candidates))
+    table_depth_max_mm = float(np.max(table_candidates))
     height_mm = table_depth_mm - object_depth_mm
     if height_mm < 0.0:
         raise ValueError(
@@ -107,7 +113,7 @@ def measure_object_height(
         table_depth_mm=table_depth_mm,
         height_mm=height_mm,
         object_sample_count=int(object_values.size),
-        table_sample_count=int(table_values.size),
+        table_sample_count=int(table_candidates.size),
         table_depth_min_mm=table_depth_min_mm,
         table_depth_max_mm=table_depth_max_mm,
     )
@@ -128,3 +134,20 @@ def _clamped_box(
 def _valid_depth_values(values: np.ndarray) -> np.ndarray:
     numeric = np.asarray(values, dtype=np.float64).reshape(-1)
     return numeric[(numeric >= 100.0) & (numeric <= 10000.0) & np.isfinite(numeric)]
+
+
+def _dominant_depth_values(values: np.ndarray, tolerance_mm: float) -> np.ndarray:
+    sorted_values = np.sort(values)
+    start = 0
+    best_start = 0
+    best_stop = 1
+    maximum_span_mm = 2.0 * tolerance_mm
+    for stop, value in enumerate(sorted_values):
+        while value - sorted_values[start] > maximum_span_mm:
+            start += 1
+        if stop + 1 - start > best_stop - best_start:
+            best_start = start
+            best_stop = stop + 1
+    cluster = sorted_values[best_start:best_stop]
+    center_mm = (cluster[0] + cluster[-1]) / 2.0
+    return sorted_values[np.abs(sorted_values - center_mm) <= tolerance_mm]
