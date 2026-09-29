@@ -50,31 +50,6 @@ def measure_object_height(
         depth[y1 + inset_y:y2 - inset_y, x1 + inset_x:x2 - inset_x]
     )
 
-    expanded_width = box_width * support_ring_scale
-    expanded_height = box_height * support_ring_scale
-    center_x = (x1 + x2) / 2.0
-    center_y = (y1 + y2) / 2.0
-    outer = _clamped_box(
-        (
-            center_x - expanded_width / 2.0,
-            center_y - expanded_height / 2.0,
-            center_x + expanded_width / 2.0,
-            center_y + expanded_height / 2.0,
-        ),
-        width,
-        height,
-    )
-    ox1, oy1, ox2, oy2 = outer
-    ring = depth[oy1:oy2, ox1:ox2]
-    ring_mask = np.ones(ring.shape, dtype=bool)
-    ring_mask[y1 - oy1:y2 - oy1, x1 - ox1:x2 - ox1] = False
-    support_values = _valid_depth_values(ring[ring_mask])
-
-    if support_values.size < minimum_valid_pixels:
-        raise ValueError(
-            f"OAK D support ring has only {support_values.size} valid depth pixels"
-        )
-
     if object_values.size >= minimum_valid_pixels:
         object_depth_mm = float(np.median(object_values))
         object_depth_source = "object_bbox"
@@ -88,6 +63,26 @@ def measure_object_height(
         raise ValueError(
             f"OAK D object area has only {object_values.size} valid depth pixels"
         )
+
+    support_values = np.empty(0, dtype=np.float64)
+    maximum_support_depth_mm = object_depth_mm + maximum_height_m * 1000.0
+    for scale in (
+        support_ring_scale,
+        support_ring_scale * 1.5,
+        support_ring_scale * 2.0,
+    ):
+        candidates = _support_ring_values(depth, (x1, y1, x2, y2), scale)
+        support_values = candidates[
+            (candidates >= object_depth_mm)
+            & (candidates <= maximum_support_depth_mm)
+        ]
+        if support_values.size >= minimum_valid_pixels:
+            break
+    if support_values.size < minimum_valid_pixels:
+        raise ValueError(
+            f"OAK D support area has only {support_values.size} valid depth pixels"
+        )
+
     support_depth_mm = float(np.median(support_values))
     height_m = (support_depth_mm - object_depth_mm) / 1000.0
     if height_m < 0.0:
@@ -118,6 +113,33 @@ def _clamped_box(
     x2 = max(x1 + 1, min(width, int(round(float(bbox[2])))))
     y2 = max(y1 + 1, min(height, int(round(float(bbox[3])))))
     return x1, y1, x2, y2
+
+
+def _support_ring_values(
+    depth: np.ndarray,
+    box: tuple[int, int, int, int],
+    scale: float,
+) -> np.ndarray:
+    height, width = depth.shape
+    x1, y1, x2, y2 = box
+    center_x = (x1 + x2) / 2.0
+    center_y = (y1 + y2) / 2.0
+    expanded_width = (x2 - x1) * scale
+    expanded_height = (y2 - y1) * scale
+    ox1, oy1, ox2, oy2 = _clamped_box(
+        (
+            center_x - expanded_width / 2.0,
+            center_y - expanded_height / 2.0,
+            center_x + expanded_width / 2.0,
+            center_y + expanded_height / 2.0,
+        ),
+        width,
+        height,
+    )
+    ring = depth[oy1:oy2, ox1:ox2]
+    mask = np.ones(ring.shape, dtype=bool)
+    mask[y1 - oy1:y2 - oy1, x1 - ox1:x2 - ox1] = False
+    return _valid_depth_values(ring[mask])
 
 
 def _valid_depth_values(values: np.ndarray) -> np.ndarray:
