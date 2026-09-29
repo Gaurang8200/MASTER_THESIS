@@ -5,6 +5,7 @@ import subprocess
 import time
 import sys
 import json
+import numpy as np
 from pathlib import Path
 
 AUDIO_PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -89,9 +90,10 @@ class MultiObjectDetector:
             capture_width, capture_height = get_capture_resolution()
             camera = RgbCameraStream(capture_width, capture_height)
             camera.start()
-            frame = camera.read()
-            if frame is None:
-                raise Exception("Failed to capture image")
+            rgbd_frame = camera.read_rgbd()
+            if rgbd_frame is None:
+                raise RuntimeError("Failed to capture synchronized OAK D RGB and depth")
+            frame = rgbd_frame.color
 
             actual_height, actual_width = frame.shape[:2]
             robot_type = os.environ.get("ROBOT_TYPE", "universal").strip().lower()
@@ -111,8 +113,24 @@ class MultiObjectDetector:
             image_path = os.path.join(PHOTOS_DIR, filename)
             if not cv2.imwrite(image_path, frame):
                 raise RuntimeError(f"Could not save captured image {image_path}")
+            depth_path = os.path.join(TXT_FILE_DIR, "latest_depth.npy")
+            np.save(depth_path, rgbd_frame.depth_mm, allow_pickle=False)
+            metadata_path = os.path.join(TXT_FILE_DIR, "latest_depth_capture.json")
+            with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+                json.dump(
+                    {
+                        "depth_path": depth_path,
+                        "width": actual_width,
+                        "height": actual_height,
+                        "units": "millimetres",
+                        "aligned_to": "oak_d_rgb",
+                    },
+                    metadata_file,
+                    indent=2,
+                )
             
             print(f"SUCCESS: Image captured: {image_path}")
+            print(f"SUCCESS: Aligned depth captured: {depth_path}")
             return image_path
         except Exception as e:
             print(f"ERROR: Camera capture failed: {e}")
@@ -288,7 +306,9 @@ class MultiObjectDetector:
             'available_objects.txt',
             'object_count.txt',
             'label.txt',
-            'center_point.txt'
+            'center_point.txt',
+            'latest_depth.npy',
+            'latest_depth_capture.json'
         ]
         
         for filename in files_to_clear:

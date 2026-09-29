@@ -2,18 +2,15 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
-from pathlib import Path
+from datetime import timedelta
 from typing import Any
 
-import cv2
+import numpy as np
 
 
-CAMERA_BACKEND_ENV = "VISION_CAMERA_BACKEND"
 CAMERA_DEVICE_ENV = "VISION_CAMERA_DEVICE"
-OPENCV_BACKEND = "opencv"
-OAK_RGB_BACKEND = "oak_rgb"
+OAK_D_BACKEND = "oak_d"
 
 
 @dataclass(frozen=True)
@@ -27,31 +24,38 @@ class CameraOption:
         return f"{self.backend}:{self.device}"
 
 
-def discover_rgb_cameras(max_opencv_index: int = 9) -> list[CameraOption]:
-    options = _discover_oak_cameras()
-    for index in range(max_opencv_index + 1):
-        capture = cv2.VideoCapture(index)
-        try:
-            if capture.isOpened():
-                options.append(
-                    CameraOption(_opencv_label(index), OPENCV_BACKEND, str(index))
-                )
-        finally:
-            capture.release()
+@dataclass(frozen=True)
+class OakDFrame:
+    color: np.ndarray
+    depth_mm: np.ndarray
+
+
+def discover_oak_cameras() -> list[CameraOption]:
+    try:
+        import depthai as dai
+    except ImportError:
+        return []
+    try:
+        devices = dai.Device.getAllAvailableDevices()
+    except Exception:
+        return []
+    options: list[CameraOption] = []
+    for device in devices:
+        identifier = _depthai_device_id(device)
+        label = f"OAK D {identifier}" if identifier else "OAK D"
+        options.append(CameraOption(label, OAK_D_BACKEND, identifier))
     return options
 
 
-def parse_camera_option(value: str) -> tuple[str, str]:
+def parse_camera_option(value: str) -> str:
     backend, separator, device = value.partition(":")
-    if not separator or backend not in {OPENCV_BACKEND, OAK_RGB_BACKEND}:
-        raise ValueError(f"Invalid camera selection {value}")
-    return backend, device
+    if not separator or backend != OAK_D_BACKEND:
+        raise ValueError(f"Invalid OAK D camera selection {value}")
+    return device
 
 
 def apply_camera_environment(value: str) -> None:
-    backend, device = parse_camera_option(value)
-    os.environ[CAMERA_BACKEND_ENV] = backend
-    os.environ[CAMERA_DEVICE_ENV] = device
+    os.environ[CAMERA_DEVICE_ENV] = parse_camera_option(value)
 
 
 class RgbCameraStream:
@@ -60,46 +64,49 @@ class RgbCameraStream:
             raise ValueError("Camera dimensions must be positive")
         self._width = width
         self._height = height
-        self._backend = os.environ.get(CAMERA_BACKEND_ENV, OPENCV_BACKEND)
-        self._device = os.environ.get(CAMERA_DEVICE_ENV, "0")
-        self._capture: cv2.VideoCapture | None = None
+        self._device = os.environ.get(CAMERA_DEVICE_ENV, "")
         self._oak_device: Any = None
         self._oak_pipeline: Any = None
         self._oak_queue: Any = None
 
     @property
     def is_open(self) -> bool:
-        if self._backend == OPENCV_BACKEND:
-            return self._capture is not None and self._capture.isOpened()
         return self._oak_pipeline is not None
 
     @property
     def backend(self) -> str:
-        return self._backend
+        return OAK_D_BACKEND
 
     def start(self) -> None:
         if self.is_open:
             return
-        if self._backend == OAK_RGB_BACKEND:
-            self._start_oak_rgb()
-            return
-        self._start_opencv()
+        self._start_oak_rgbd()
 
-    def read(self) -> Any | None:
-        if self._backend == OAK_RGB_BACKEND:
-            if self._oak_queue is None:
-                raise RuntimeError("OAK D RGB camera is not open")
-            message = self._oak_queue.get()
-            return message.getCvFrame() if message is not None else None
-        if self._capture is None:
-            raise RuntimeError("OpenCV camera is not open")
-        success, frame = self._capture.read()
-        return frame if success else None
+    def read(self) -> np.ndarray | None:
+        frame = self.read_rgbd()
+        return frame.color if frame is not None else None
+
+    def read_rgbd(self) -> OakDFrame | None:
+        if self._oak_queue is None:
+            raise RuntimeError("OAK D camera is not open")
+        messages = self._oak_queue.get()
+        if messages is None:
+            return None
+        color_message = messages["rgb"]
+        depth_message = messages["depth_aligned"]
+        if color_message is None or depth_message is None:
+            return None
+        color = color_message.getCvFrame()
+        depth_mm = depth_message.getFrame()
+        if color is None or depth_mm is None:
+            return None
+        if color.shape[:2] != depth_mm.shape[:2]:
+            raise RuntimeError(
+                "OAK D aligned depth dimensions do not match the RGB frame"
+            )
+        return OakDFrame(color=color, depth_mm=depth_mm)
 
     def close(self) -> None:
-        if self._capture is not None:
-            self._capture.release()
-            self._capture = None
         pipeline = self._oak_pipeline
         device = self._oak_device
         self._oak_pipeline = None
@@ -113,37 +120,40 @@ class RgbCameraStream:
             if device is not None:
                 device.close()
 
-    def _start_opencv(self) -> None:
-        try:
-            index = int(self._device)
-        except ValueError as error:
-            raise ValueError(f"Invalid OpenCV camera index {self._device}") from error
-        capture = cv2.VideoCapture(index)
-        if not capture.isOpened():
-            capture.release()
-            raise RuntimeError(f"Could not open OpenCV camera {index}")
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
-        self._capture = capture
-
-    def _start_oak_rgb(self) -> None:
+    def _start_oak_rgbd(self) -> None:
         try:
             import depthai as dai
         except ImportError as error:
-            raise RuntimeError("DepthAI is required for the OAK D RGB camera") from error
+            raise RuntimeError("DepthAI is required for the OAK D camera") from error
 
         device = dai.Device(dai.DeviceInfo(self._device)) if self._device else dai.Device()
         pipeline = None
         try:
             pipeline = dai.Pipeline(device)
-            camera = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
-            output = camera.requestOutput(
+            rgb = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+            left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+            right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+            stereo = pipeline.create(dai.node.StereoDepth)
+            align = pipeline.create(dai.node.ImageAlign)
+            sync = pipeline.create(dai.node.Sync)
+            sync.setSyncThreshold(timedelta(milliseconds=34))
+
+            rgb_output = rgb.requestOutput(
                 size=(self._width, self._height),
                 type=dai.ImgFrame.Type.BGR888p,
                 resizeMode=dai.ImgResizeMode.CROP,
                 fps=15,
+                enableUndistortion=False,
             )
-            queue = output.createOutputQueue(maxSize=2, blocking=False)
+            left_output = left.requestOutput(size=(640, 400), fps=15)
+            right_output = right.requestOutput(size=(640, 400), fps=15)
+            left_output.link(stereo.left)
+            right_output.link(stereo.right)
+            stereo.depth.link(align.input)
+            rgb_output.link(align.inputAlignTo)
+            rgb_output.link(sync.inputs["rgb"])
+            align.outputAligned.link(sync.inputs["depth_aligned"])
+            queue = sync.out.createOutputQueue(maxSize=2, blocking=False)
             pipeline.start()
         except Exception:
             try:
@@ -157,23 +167,6 @@ class RgbCameraStream:
         self._oak_queue = queue
 
 
-def _discover_oak_cameras() -> list[CameraOption]:
-    try:
-        import depthai as dai
-    except ImportError:
-        return []
-    try:
-        devices = dai.Device.getAllAvailableDevices()
-    except Exception:
-        return []
-    options: list[CameraOption] = []
-    for device in devices:
-        identifier = _depthai_device_id(device)
-        label = f"OAK D RGB {identifier}" if identifier else "OAK D RGB"
-        options.append(CameraOption(label, OAK_RGB_BACKEND, identifier))
-    return options
-
-
 def _depthai_device_id(device: Any) -> str:
     for name in ("getDeviceId", "getMxId"):
         method = getattr(device, name, None)
@@ -182,13 +175,3 @@ def _depthai_device_id(device: Any) -> str:
             if value:
                 return str(value)
     return str(getattr(device, "deviceId", ""))
-
-
-def _opencv_label(index: int) -> str:
-    if sys.platform.startswith("linux"):
-        name_path = Path(f"/sys/class/video4linux/video{index}/name")
-        if name_path.is_file():
-            name = name_path.read_text(encoding="utf8").strip()
-            if name:
-                return f"{name} Camera {index}"
-    return f"Camera {index}"

@@ -19,8 +19,15 @@
     "2": 0.040
   },
   "default_orientation": [1.0, 0.0, 0.0, 0.0],
+  "calibration_directory": "FR_oak_calibration",
   "calibration_image_size": [640, 400],
   "mirror_x": true,
+  "depth": {
+    "bbox_inset_ratio": 0.25,
+    "support_ring_scale": 1.6,
+    "minimum_valid_pixels": 25,
+    "maximum_height_m": 0.25
+  },
   "workspace": {
     "x": [0.1, 0.75],
     "y": [-0.146, 0.65],

@@ -13,6 +13,7 @@ from src import robot_control as perception_steps
 from src.robot_output import emit_method_execution
 
 from .FR_config import FrankaConfig, load_franka_config
+from .FR_depth import DepthMeasurement, measure_object_height
 from .FR_geometry import rotation_vector_to_quaternion
 from .FR_models import CartesianPose, PixelPoint, RobotPoint
 from .FR_original_transformer import OriginalFrankaPixelTransformer
@@ -37,6 +38,7 @@ class WorkflowContext:
     selected_orientation: tuple[float, float, float, float] | None = None
     target_zone: CartesianPose | None = None
     target_is_dynamic: bool = False
+    depth_measurement: DepthMeasurement | None = None
 
 
 class FrankaAudioWorkflow:
@@ -182,12 +184,32 @@ class FrankaAudioWorkflow:
         )
         self._context.selected_point = self._transform_pixel(pixel)
         self._context.selected_class = self._read_selected_class(data)
+        depth_path_value = data.get("depth_path")
+        if depth_path_value:
+            self._context.depth_measurement = measure_object_height(
+                Path(str(depth_path_value)),
+                data["original_bbox"],
+                self._config.depth_bbox_inset_ratio,
+                self._config.depth_support_ring_scale,
+                self._config.depth_minimum_valid_pixels,
+                self._config.depth_maximum_height_m,
+            )
+        elif not self._simulation:
+            raise FileNotFoundError("Selected object has no synchronized OAK D depth capture")
         self._output(
             "FRANKA COORDINATES: "
             f"x={self._context.selected_point.x:.4f}, "
             f"y={self._context.selected_point.y:.4f}, "
             f"z={self._context.selected_point.z:.4f}"
         )
+        if self._context.depth_measurement is not None:
+            measurement = self._context.depth_measurement
+            self._output(
+                "OAK D DEPTH: "
+                f"object={measurement.object_depth_mm:.1f} mm, "
+                f"support={measurement.support_depth_mm:.1f} mm, "
+                f"height={measurement.height_m:.4f} m"
+            )
 
     def _move_above_selected_object(self) -> None:
         point = self._require_selected_point()
@@ -259,7 +281,14 @@ class FrankaAudioWorkflow:
         point = self._require_selected_point()
         object_class = self._require_selected_class()
         orientation = self._context.selected_orientation or self._config.default_orientation
-        pick_height = self._config.pick_height(object_class)
+        base_pick_height = self._config.pick_height(object_class)
+        height_correction = (
+            self._context.depth_measurement.height_m
+            if self._context.depth_measurement is not None
+            else 0.0
+        )
+        pick_height = base_pick_height + height_correction
+        self._validate_workspace((point.x, point.y, pick_height))
         alignment_height = max(self._config.lift_height, pick_height)
         self._output("FRANKA GRIPPER: Opening before pickup approach")
         self._arm.release()
@@ -277,7 +306,8 @@ class FrankaAudioWorkflow:
         self._output(
             "FRANKA PICK COORDINATES: "
             f"x={point.x:.4f}, y={point.y:.4f}, "
-            f"z={pick_height:.4f}"
+            f"z={pick_height:.4f}, base_z={base_pick_height:.4f}, "
+            f"depth_correction={height_correction:.4f}"
         )
         self._move_cartesian(
             point.x,
@@ -468,6 +498,7 @@ def create_franka_workflow_session(
     transformer = OriginalFrankaPixelTransformer(
         (config.calibration_width, config.calibration_height),
         config.mirror_x,
+        config.calibration_directory,
     )
     arm: RobotArm
     if simulation:
@@ -536,6 +567,7 @@ def transform_franka_pixel_to_robot(
     transformer = OriginalFrankaPixelTransformer(
         expected_size,
         config.mirror_x,
+        config.calibration_directory,
     )
     return transformer.transform(
         PixelPoint(float(pixel_x), float(pixel_y)),
