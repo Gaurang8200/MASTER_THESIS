@@ -113,11 +113,11 @@ class OakDepthPipelineTests(unittest.TestCase):
                 inset_ratio=0.25,
                 support_ring_scale=1.6,
                 minimum_valid_pixels=25,
-                maximum_height_m=0.25,
+                maximum_height_mm=250.0,
             )
         self.assertEqual(measurement.object_depth_mm, 620.0)
         self.assertEqual(measurement.support_depth_mm, 700.0)
-        self.assertAlmostEqual(measurement.height_m, 0.08)
+        self.assertAlmostEqual(measurement.height_mm, 80.0)
 
     def test_invalid_depth_fails_closed(self) -> None:
         depth = np.zeros((40, 40), dtype=np.uint16)
@@ -125,7 +125,7 @@ class OakDepthPipelineTests(unittest.TestCase):
             path = Path(directory) / "depth.npy"
             np.save(path, depth, allow_pickle=False)
             with self.assertRaisesRegex(ValueError, "valid depth pixels"):
-                measure_object_height(path, (10, 10, 30, 30), 0.2, 1.5, 5, 0.25)
+                measure_object_height(path, (10, 10, 30, 30), 0.2, 1.5, 5, 250.0)
 
     def test_only_oak_camera_options_are_accepted(self) -> None:
         self.assertEqual(parse_camera_option("oak_d:device_1"), "device_1")
@@ -141,7 +141,7 @@ class OakDepthPipelineTests(unittest.TestCase):
                     Path(directory),
                 )
 
-    def test_existing_pixel_conversion_algorithm_is_unchanged(self) -> None:
+    def test_pixel_conversion_returns_millimetres(self) -> None:
         calibration_directory = (
             AUDIO_ROOT / "src" / "FR_franka" / "FR_original_calibration"
         )
@@ -151,9 +151,9 @@ class OakDepthPipelineTests(unittest.TestCase):
             calibration_directory,
         )
         point = transformer.transform(PixelPoint(372.0, 200.0), (640, 400))
-        self.assertAlmostEqual(point.x, 0.41553, places=5)
-        self.assertAlmostEqual(point.y, 0.37818, places=5)
-        self.assertEqual(point.z, 0.3)
+        self.assertAlmostEqual(point.x, 402.11, places=2)
+        self.assertAlmostEqual(point.y, 404.88, places=2)
+        self.assertEqual(point.z, 300.0)
 
 
 if __name__ == "__main__":

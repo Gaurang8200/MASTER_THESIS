@@ -16,7 +16,7 @@ def teach_zones(config_path: Path = DEFAULT_CONFIG_PATH) -> None:
     arm = FrankaRobotArm(
         config.robot_ip,
         config.dynamics_factor,
-        config.gripper_speed,
+        config.gripper_speed_mm_s,
         config.gripper_force,
     )
     raw_config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -31,10 +31,10 @@ def teach_zones(config_path: Path = DEFAULT_CONFIG_PATH) -> None:
             )
             pose = arm.current_pose()
             zones[zone_name] = {
-                "translation": list(pose.translation),
+                "translation_mm": list(pose.translation),
                 "quaternion": list(pose.quaternion),
             }
-            print(f"Recorded {zone_name}: {pose.translation}")
+            print(f"Recorded {zone_name}: {pose.translation} mm")
     finally:
         arm.close()
     raw_config["zones"] = zones

@@ -854,7 +854,7 @@ def _transform_destination_point(gesture_result):
            f"rgb_u={pixel_x:.1f}, rgb_v={pixel_y:.1f}, "
            f"left_u={left_x:.1f}, left_v={left_y:.1f}, "
            f"depth={float(gesture_result.get('fingertip_depth_mm') or 0.0):.1f} mm, "
-           f"x={point.x:.5f}, y={point.y:.5f}"
+           f"x={point.x:.2f} mm, y={point.y:.2f} mm"
        )
        return point.x, point.y
    detection_data = load_overview_detection_data()

@@ -218,7 +218,7 @@ class FrankaAudioWorkflow:
                 self._config.depth_bbox_inset_ratio,
                 self._config.depth_support_ring_scale,
                 self._config.depth_minimum_valid_pixels,
-                self._config.depth_maximum_height_m,
+                self._config.depth_maximum_height_mm,
                 float(data["object_depth_mm"])
                 if data.get("object_depth_mm") is not None
                 else None,
@@ -227,9 +227,9 @@ class FrankaAudioWorkflow:
             raise FileNotFoundError("Selected object has no synchronized OAK D depth capture")
         self._output(
             "FRANKA COORDINATES: "
-            f"x={self._context.selected_point.x:.4f}, "
-            f"y={self._context.selected_point.y:.4f}, "
-            f"z={self._context.selected_point.z:.4f}"
+            f"x={self._context.selected_point.x:.2f} mm, "
+            f"y={self._context.selected_point.y:.2f} mm, "
+            f"z={self._context.selected_point.z:.2f} mm"
         )
         if self._context.depth_measurement is not None:
             measurement = self._context.depth_measurement
@@ -237,7 +237,7 @@ class FrankaAudioWorkflow:
                 "OAK D DEPTH: "
                 f"object={measurement.object_depth_mm:.1f} mm, "
                 f"support={measurement.support_depth_mm:.1f} mm, "
-                f"height={measurement.height_m:.4f} m, "
+                f"height={measurement.height_mm:.1f} mm, "
                 f"source={measurement.object_depth_source}, "
                 f"object_samples={measurement.object_sample_count}, "
                 f"support_samples={measurement.support_sample_count}"
@@ -245,17 +245,17 @@ class FrankaAudioWorkflow:
 
     def _move_above_selected_object(self) -> None:
         point = self._require_selected_point()
-        offset_x, offset_y, offset_z = self._config.camera_offset
+        offset_x, offset_y, offset_z = self._config.camera_offset_mm
         camera_x = point.x + offset_x
         camera_y = point.y + offset_y
-        camera_z = self._config.approach_height + offset_z
+        camera_z = self._config.approach_height_mm + offset_z
         self._output(
             "FRANKA CAMERA OFFSET: "
-            f"x={offset_x:.4f}, y={offset_y:.4f}, z={offset_z:.4f}"
+            f"x={offset_x:.2f} mm, y={offset_y:.2f} mm, z={offset_z:.2f} mm"
         )
         self._output(
             "FRANKA CAMERA APPROACH: "
-            f"x={camera_x:.4f}, y={camera_y:.4f}, z={camera_z:.4f}"
+            f"x={camera_x:.2f} mm, y={camera_y:.2f} mm, z={camera_z:.2f} mm"
         )
         self._move_cartesian(
             camera_x,
@@ -313,21 +313,21 @@ class FrankaAudioWorkflow:
         point = self._require_selected_point()
         object_class = self._require_selected_class()
         orientation = self._context.selected_orientation or self._config.default_orientation
-        base_pick_height = self._config.pick_height(object_class)
+        base_pick_height = self._config.pick_height_mm(object_class)
         height_correction = (
-            self._context.depth_measurement.height_m
+            self._context.depth_measurement.height_mm
             if self._context.depth_measurement is not None
             else 0.0
         )
         pick_height = base_pick_height + height_correction
         self._validate_workspace((point.x, point.y, pick_height))
-        alignment_height = max(self._config.lift_height, pick_height)
+        alignment_height = max(self._config.lift_height_mm, pick_height)
         self._output("FRANKA GRIPPER: Opening before pickup approach")
         self._arm.release()
         self._output(
             "FRANKA PICK ALIGNMENT: "
-            f"x={point.x:.4f}, y={point.y:.4f}, "
-            f"z={alignment_height:.4f}"
+            f"x={point.x:.2f} mm, y={point.y:.2f} mm, "
+            f"z={alignment_height:.2f} mm"
         )
         self._move_cartesian(
             point.x,
@@ -337,9 +337,9 @@ class FrankaAudioWorkflow:
         )
         self._output(
             "FRANKA PICK COORDINATES: "
-            f"x={point.x:.4f}, y={point.y:.4f}, "
-            f"z={pick_height:.4f}, base_z={base_pick_height:.4f}, "
-            f"depth_correction={height_correction:.4f}"
+            f"x={point.x:.2f} mm, y={point.y:.2f} mm, "
+            f"z={pick_height:.2f} mm, base_z={base_pick_height:.2f} mm, "
+            f"depth_correction={height_correction:.2f} mm"
         )
         self._move_cartesian(
             point.x,
@@ -358,10 +358,10 @@ class FrankaAudioWorkflow:
         orientation = self._context.selected_orientation or self._config.default_orientation
         self._output(
             "FRANKA PICK LIFT: "
-            f"x={point.x:.4f}, y={point.y:.4f}, "
-            f"z={self._config.lift_height:.4f}"
+            f"x={point.x:.2f} mm, y={point.y:.2f} mm, "
+            f"z={self._config.lift_height_mm:.2f} mm"
         )
-        self._move_cartesian(point.x, point.y, self._config.lift_height, orientation)
+        self._move_cartesian(point.x, point.y, self._config.lift_height_mm, orientation)
         self._output("FRANKA PICK LIFT: Completed")
 
     def _move_intermediate(self) -> None:
@@ -377,7 +377,7 @@ class FrankaAudioWorkflow:
         zone_name = match.group(1) or match.group(2)
         if self._simulation and zone_name not in self._config.zones:
             self._context.target_zone = CartesianPose.create(
-                (0.4, 0.0, 0.1), self._config.default_orientation
+                (400.0, 0.0, 100.0), self._config.default_orientation
             )
             self._output(f"FRANKA SIMULATION ZONE: {zone_name}")
             return
@@ -387,7 +387,7 @@ class FrankaAudioWorkflow:
             (
                 zone.translation[0],
                 zone.translation[1],
-                self._config.place_height(object_class),
+                self._config.place_height_mm(object_class),
             ),
             zone.quaternion,
         )
@@ -402,14 +402,14 @@ class FrankaAudioWorkflow:
             (
                 float(values[0]),
                 float(values[1]),
-                self._config.place_height(object_class),
+                self._config.place_height_mm(object_class),
             ),
             self._config.default_orientation,
         )
         self._context.target_is_dynamic = True
         x, y, z = self._context.target_zone.translation
         self._output(
-            f"FRANKA POINT TARGET: x={x:.4f}, y={y:.4f}, z={z:.4f}"
+            f"FRANKA POINT TARGET: x={x:.2f} mm, y={y:.2f} mm, z={z:.2f} mm"
         )
 
     def _move_to_zone(self) -> None:
@@ -418,7 +418,9 @@ class FrankaAudioWorkflow:
         if not self._context.target_is_dynamic:
             self._validate_workspace(self._context.target_zone.translation)
         x, y, z = self._context.target_zone.translation
-        self._output(f"FRANKA MOVE TARGET: x={x:.4f}, y={y:.4f}, z={z:.4f}")
+        self._output(
+            f"FRANKA MOVE TARGET: x={x:.2f} mm, y={y:.2f} mm, z={z:.2f} mm"
+        )
         self._arm.move_pose(self._context.target_zone)
 
     def _release(self) -> None:
@@ -450,20 +452,23 @@ class FrankaAudioWorkflow:
         quaternion: Sequence[float],
     ) -> None:
         self._validate_workspace((x, y, z))
-        self._output(f"FRANKA MOVE CARTESIAN: x={x:.4f}, y={y:.4f}, z={z:.4f}")
+        self._output(
+            f"FRANKA MOVE CARTESIAN: x={x:.2f} mm, y={y:.2f} mm, z={z:.2f} mm"
+        )
         self._arm.move_pose(CartesianPose.create((x, y, z), quaternion))
 
     def _validate_workspace(self, translation: Sequence[float]) -> None:
         x, y, z = (float(value) for value in translation)
         checks = (
-            (self._config.workspace_x, x, "x"),
-            (self._config.workspace_y, y, "y"),
-            (self._config.workspace_z, z, "z"),
+            (self._config.workspace_x_mm, x, "x"),
+            (self._config.workspace_y_mm, y, "y"),
+            (self._config.workspace_z_mm, z, "z"),
         )
         for limits, value, axis in checks:
             if not limits[0] <= value <= limits[1]:
                 raise ValueError(
-                    f"Franka target {axis}={value:.4f} is outside workspace {limits}"
+                    f"Franka target {axis}={value:.2f} mm is outside workspace "
+                    f"{limits} mm"
                 )
 
     def _require_selected_point(self) -> RobotPoint:
@@ -548,7 +553,7 @@ def create_franka_workflow_session(
         arm = FrankaRobotArm(
             config.robot_ip,
             config.dynamics_factor,
-            config.gripper_speed,
+            config.gripper_speed_mm_s,
             config.gripper_force,
         )
     workflow = FrankaAudioWorkflow(arm, config, transformer, simulation, output)
@@ -576,7 +581,7 @@ def prepare_franka_for_detection(robot_ip: str | None = None) -> None:
     arm = FrankaRobotArm(
         config.robot_ip,
         config.dynamics_factor,
-        config.gripper_speed,
+        config.gripper_speed_mm_s,
         config.gripper_force,
     )
     try:

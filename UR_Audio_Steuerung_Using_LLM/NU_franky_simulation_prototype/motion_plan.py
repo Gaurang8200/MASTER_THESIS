@@ -24,34 +24,34 @@ def build_motion_plan(
     scene: SceneSpec,
 ) -> PrototypeMotionPlan:
     zone = config.zone(scene.target_zone)
-    offset_x, offset_y, offset_z = config.camera_offset
+    offset_x, offset_y, offset_z = config.camera_offset_mm
     orientation = config.default_orientation
 
     camera_approach = CartesianPose.create(
         (
-            scene.object_x + offset_x,
-            scene.object_y + offset_y,
-            config.approach_height + offset_z,
+            scene.object_x_mm + offset_x,
+            scene.object_y_mm + offset_y,
+            config.approach_height_mm + offset_z,
         ),
         orientation,
     )
     pick_pose = CartesianPose.create(
         (
-            scene.object_x,
-            scene.object_y,
-            config.pick_height(scene.object_class),
+            scene.object_x_mm,
+            scene.object_y_mm,
+            config.pick_height_mm(scene.object_class),
         ),
         orientation,
     )
     lift_pose = CartesianPose.create(
-        (scene.object_x, scene.object_y, config.lift_height),
+        (scene.object_x_mm, scene.object_y_mm, config.lift_height_mm),
         orientation,
     )
     target_pose = CartesianPose.create(
         (
             zone.translation[0],
             zone.translation[1],
-            config.place_height(scene.object_class),
+            config.place_height_mm(scene.object_class),
         ),
         zone.quaternion,
     )

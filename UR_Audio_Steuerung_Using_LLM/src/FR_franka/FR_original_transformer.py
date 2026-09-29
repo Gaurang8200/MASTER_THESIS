@@ -86,7 +86,7 @@ class OriginalFrankaPixelTransformer:
             raise ValueError(f"calibration pose {self._pose_index} does not exist")
         transform = np.asarray(transforms[self._pose_index], dtype=float)
         return CartesianPose.create(
-            transform[:3, 3] / 1000.0,
+            transform[:3, 3],
             rotation_matrix_to_quaternion(transform[:3, :3]),
         )
 

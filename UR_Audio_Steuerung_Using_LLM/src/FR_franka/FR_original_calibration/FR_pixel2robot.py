@@ -28,15 +28,12 @@ def pixel2robot(cordx, cordy, nr):
 
     result, bTc, rot_c2p, trans_c2p, bTp, Spitze_mat = fp.calc_pixel2robot(tvec, rvec, camera_matrix, bTf_i, fTc, pixel_coords, nr, False)#printout results False
     #print(result.shape)
-    print("results:")
+    print("pixel2robot result in mm:")
     print(result)
 
     x_robot = result[0, 0]
     y_robot = result[1, 0]
-    z_robot = 0.3
+    z_robot = 300.0
 
-    x_robot_m = x_robot / 1000
-    y_robot_m = y_robot / 1000
-
-    return x_robot_m, y_robot_m, z_robot
+    return x_robot, y_robot, z_robot
 

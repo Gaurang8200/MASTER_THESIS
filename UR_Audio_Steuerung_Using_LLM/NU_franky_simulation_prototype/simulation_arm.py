@@ -24,7 +24,7 @@ class FrankySimulationArm(FrankaRobotArm):
         super().__init__(
             host="127.0.0.1",
             dynamics_factor=config.dynamics_factor,
-            gripper_speed=config.gripper_speed,
+            gripper_speed_mm_s=config.gripper_speed_mm_s,
             gripper_force=config.gripper_force,
         )
         self._config = config

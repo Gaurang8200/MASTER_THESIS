@@ -11,6 +11,7 @@ from .FR_models import CartesianPose
 
 
 LOGGER = logging.getLogger(__name__)
+MILLIMETRES_PER_METRE = 1000.0
 
 
 def quaternion_to_rotation_matrix(quaternion: Sequence[float]) -> np.ndarray:
@@ -71,7 +72,7 @@ class FrankaRobotArm(RobotArm):
         self,
         host: str,
         dynamics_factor: float,
-        gripper_speed: float,
+        gripper_speed_mm_s: float,
         gripper_force: float,
     ) -> None:
         if not host.strip():
@@ -80,7 +81,9 @@ class FrankaRobotArm(RobotArm):
             raise ValueError("dynamics factor must be between zero and one")
         self._host = host
         self._dynamics_factor = float(dynamics_factor)
-        self._gripper_speed = float(gripper_speed)
+        if gripper_speed_mm_s <= 0.0:
+            raise ValueError("gripper speed must be positive")
+        self._gripper_speed_mm_s = float(gripper_speed_mm_s)
         self._gripper_force = float(gripper_force)
         self._api: Any = None
         self._robot: Any = None
@@ -121,9 +124,9 @@ class FrankaRobotArm(RobotArm):
 
     def move_pose(self, pose: CartesianPose) -> None:
         self._require_started()
-        LOGGER.info("FRANKA_MOVE_POSE target=%s", pose.translation)
+        LOGGER.info("FRANKA_MOVE_POSE_MM target=%s", pose.translation)
         affine = self._api.Affine(
-            np.asarray(pose.translation, dtype=float),
+            np.asarray(pose.translation, dtype=float) / MILLIMETRES_PER_METRE,
             np.asarray(pose.quaternion, dtype=float),
         )
         motion = self._api.CartesianMotion(affine, self._api.ReferenceType.Absolute)
@@ -134,7 +137,8 @@ class FrankaRobotArm(RobotArm):
         state = self._robot.current_cartesian_state
         end_effector_pose = state.pose.end_effector_pose
         return CartesianPose.create(
-            np.asarray(end_effector_pose.translation, dtype=float).reshape(3),
+            np.asarray(end_effector_pose.translation, dtype=float).reshape(3)
+            * MILLIMETRES_PER_METRE,
             np.asarray(end_effector_pose.quaternion, dtype=float).reshape(4),
         )
 
@@ -145,7 +149,7 @@ class FrankaRobotArm(RobotArm):
         LOGGER.info("FRANKA_GRIP_START")
         success = self._gripper.grasp(
             0.0,
-            self._gripper_speed,
+            self._gripper_speed_mm_s / MILLIMETRES_PER_METRE,
             self._gripper_force,
             epsilon_outer=1.0,
         )
@@ -158,7 +162,7 @@ class FrankaRobotArm(RobotArm):
         if self._gripper is None:
             raise RuntimeError("Franka gripper is unavailable")
         LOGGER.info("FRANKA_RELEASE_START")
-        self._gripper.open(self._gripper_speed)
+        self._gripper.open(self._gripper_speed_mm_s / MILLIMETRES_PER_METRE)
         LOGGER.info("FRANKA_RELEASE_READY")
 
     def close(self) -> None:

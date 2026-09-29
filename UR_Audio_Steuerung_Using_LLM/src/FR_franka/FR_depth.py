@@ -11,7 +11,7 @@ import numpy as np
 class DepthMeasurement:
     object_depth_mm: float
     support_depth_mm: float
-    height_m: float
+    height_mm: float
     object_sample_count: int
     support_sample_count: int
     object_depth_source: str
@@ -23,7 +23,7 @@ def measure_object_height(
     inset_ratio: float,
     support_ring_scale: float,
     minimum_valid_pixels: int,
-    maximum_height_m: float,
+    maximum_height_mm: float,
     fallback_object_depth_mm: float | None = None,
 ) -> DepthMeasurement:
     if not depth_path.is_file():
@@ -89,19 +89,19 @@ def measure_object_height(
             f"OAK D object area has only {object_values.size} valid depth pixels"
         )
     support_depth_mm = float(np.median(support_values))
-    height_m = (support_depth_mm - object_depth_mm) / 1000.0
-    if height_m < 0.0:
+    height_mm = support_depth_mm - object_depth_mm
+    if height_mm < 0.0:
         raise ValueError(
             "OAK D measured the selected object behind the surrounding support surface"
         )
-    if height_m > maximum_height_m:
+    if height_mm > maximum_height_mm:
         raise ValueError(
-            f"OAK D object height {height_m:.4f} m exceeds the configured limit"
+            f"OAK D object height {height_mm:.1f} mm exceeds the configured limit"
         )
     return DepthMeasurement(
         object_depth_mm=object_depth_mm,
         support_depth_mm=support_depth_mm,
-        height_m=height_m,
+        height_mm=height_mm,
         object_sample_count=int(object_values.size),
         support_sample_count=int(support_values.size),
         object_depth_source=object_depth_source,

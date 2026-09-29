@@ -8,25 +8,25 @@ from xml.etree import ElementTree as ET
 
 @dataclass(frozen=True)
 class SceneSpec:
-    object_x: float = 0.4
-    object_y: float = 0.2
-    object_radius: float = 0.025
-    object_half_height: float = 0.025
+    object_x_mm: float = 400.0
+    object_y_mm: float = 200.0
+    object_radius_mm: float = 25.0
+    object_half_height_mm: float = 25.0
     object_mass: float = 0.1
     object_class: int = 0
     target_zone: str = "Zone_1"
 
     def __post_init__(self) -> None:
         values = (
-            self.object_x,
-            self.object_y,
-            self.object_radius,
-            self.object_half_height,
+            self.object_x_mm,
+            self.object_y_mm,
+            self.object_radius_mm,
+            self.object_half_height_mm,
             self.object_mass,
         )
         if not all(isfinite(value) for value in values):
             raise ValueError("Scene values must be finite")
-        if self.object_radius <= 0.0 or self.object_half_height <= 0.0:
+        if self.object_radius_mm <= 0.0 or self.object_half_height_mm <= 0.0:
             raise ValueError("Object dimensions must be positive")
         if self.object_mass <= 0.0:
             raise ValueError("Object mass must be positive")
@@ -62,8 +62,8 @@ def add_workcell(
         "body",
         name="prototype_object",
         pos=(
-            f"{scene.object_x} {scene.object_y} "
-            f"{scene.object_half_height}"
+            f"{scene.object_x_mm / 1000.0} {scene.object_y_mm / 1000.0} "
+            f"{scene.object_half_height_mm / 1000.0}"
         ),
     )
     ET.SubElement(object_body, "freejoint", name="prototype_object_joint")
@@ -72,7 +72,10 @@ def add_workcell(
         "geom",
         name="prototype_object_geom",
         type="cylinder",
-        size=f"{scene.object_radius} {scene.object_half_height}",
+        size=(
+            f"{scene.object_radius_mm / 1000.0} "
+            f"{scene.object_half_height_mm / 1000.0}"
+        ),
         mass=str(scene.object_mass),
         rgba="0.85 0.16 0.12 1",
         friction="1.2 0.02 0.002",
@@ -83,7 +86,7 @@ def add_workcell(
         worldbody,
         "body",
         name="prototype_target_zone",
-        pos=f"{float(zone_x)} {float(zone_y)} 0.003",
+        pos=f"{float(zone_x) / 1000.0} {float(zone_y) / 1000.0} 0.003",
     )
     ET.SubElement(
         zone,

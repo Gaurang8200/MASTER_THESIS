@@ -14,7 +14,7 @@ interface, and `FrankaRobotArm` movement methods.
 
 2. A working two finger gripper
 
-3. A red cylinder at X `0.400`, Y `0.200`
+3. A red cylinder at X `400 mm`, Y `200 mm`
 
 4. A blue target marker at the current `Zone_1` coordinates
 

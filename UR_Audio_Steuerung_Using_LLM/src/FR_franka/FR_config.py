@@ -17,38 +17,38 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "src" / "FR_config" / "franka_robot.json"
 class FrankaConfig:
     robot_ip: str
     dynamics_factor: float
-    gripper_speed: float
+    gripper_speed_mm_s: float
     gripper_force: float
     home_joints: tuple[float, ...]
     intermediate_joints: tuple[float, ...]
-    approach_height: float
-    camera_offset: tuple[float, float, float]
-    lift_height: float
-    pick_heights: dict[int, float]
-    place_heights: dict[int, float]
+    approach_height_mm: float
+    camera_offset_mm: tuple[float, float, float]
+    lift_height_mm: float
+    pick_heights_mm: dict[int, float]
+    place_heights_mm: dict[int, float]
     default_orientation: tuple[float, float, float, float]
     calibration_directory: Path
     calibration_width: int
     calibration_height: int
     mirror_x: bool
-    workspace_x: tuple[float, float]
-    workspace_y: tuple[float, float]
-    workspace_z: tuple[float, float]
+    workspace_x_mm: tuple[float, float]
+    workspace_y_mm: tuple[float, float]
+    workspace_z_mm: tuple[float, float]
     depth_bbox_inset_ratio: float
     depth_support_ring_scale: float
     depth_minimum_valid_pixels: int
-    depth_maximum_height_m: float
+    depth_maximum_height_mm: float
     zones: dict[str, CartesianPose]
 
-    def pick_height(self, object_class: int) -> float:
-        if object_class not in self.pick_heights:
+    def pick_height_mm(self, object_class: int) -> float:
+        if object_class not in self.pick_heights_mm:
             raise ValueError(f"No Franka pick height exists for object class {object_class}")
-        return self.pick_heights[object_class]
+        return self.pick_heights_mm[object_class]
 
-    def place_height(self, object_class: int) -> float:
-        if object_class not in self.place_heights:
+    def place_height_mm(self, object_class: int) -> float:
+        if object_class not in self.place_heights_mm:
             raise ValueError(f"No Franka place height exists for object class {object_class}")
-        return self.place_heights[object_class]
+        return self.place_heights_mm[object_class]
 
     def zone(self, name: str) -> CartesianPose:
         if name not in self.zones:
@@ -66,28 +66,34 @@ def _float_tuple(value: Any, size: int, name: str) -> tuple[float, ...]:
 
 def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
     data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("linear_unit") != "mm":
+        raise ValueError("Franka configuration linear_unit must be mm")
     calibration_directory = Path(str(data["calibration_directory"]))
     if not calibration_directory.is_absolute():
         calibration_directory = PROJECT_ROOT / "src" / "FR_franka" / calibration_directory
     zones = {
-        name: CartesianPose.create(value["translation"], value["quaternion"])
+        name: CartesianPose.create(value["translation_mm"], value["quaternion"])
         for name, value in data.get("zones", {}).items()
     }
     config = FrankaConfig(
         robot_ip=str(data["robot_ip"]),
         dynamics_factor=float(data["dynamics_factor"]),
-        gripper_speed=float(data["gripper_speed"]),
+        gripper_speed_mm_s=float(data["gripper_speed_mm_s"]),
         gripper_force=float(data["gripper_force"]),
         home_joints=_float_tuple(data["home_joints"], 7, "home_joints"),
         intermediate_joints=_float_tuple(
             data["intermediate_joints"], 7, "intermediate_joints"
         ),
-        approach_height=float(data["approach_height"]),
-        camera_offset=_float_tuple(data["camera_offset"], 3, "camera_offset"),
-        lift_height=float(data["lift_height"]),
-        pick_heights={int(key): float(value) for key, value in data["pick_heights"].items()},
-        place_heights={
-            int(key): float(value) for key, value in data["place_heights"].items()
+        approach_height_mm=float(data["approach_height_mm"]),
+        camera_offset_mm=_float_tuple(
+            data["camera_offset_mm"], 3, "camera_offset_mm"
+        ),
+        lift_height_mm=float(data["lift_height_mm"]),
+        pick_heights_mm={
+            int(key): float(value) for key, value in data["pick_heights_mm"].items()
+        },
+        place_heights_mm={
+            int(key): float(value) for key, value in data["place_heights_mm"].items()
         },
         default_orientation=_float_tuple(
             data["default_orientation"], 4, "default_orientation"
@@ -96,13 +102,19 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
         calibration_width=int(data["calibration_image_size"][0]),
         calibration_height=int(data["calibration_image_size"][1]),
         mirror_x=bool(data["mirror_x"]),
-        workspace_x=_float_tuple(data["workspace"]["x"], 2, "workspace.x"),
-        workspace_y=_float_tuple(data["workspace"]["y"], 2, "workspace.y"),
-        workspace_z=_float_tuple(data["workspace"]["z"], 2, "workspace.z"),
+        workspace_x_mm=_float_tuple(
+            data["workspace_mm"]["x"], 2, "workspace_mm.x"
+        ),
+        workspace_y_mm=_float_tuple(
+            data["workspace_mm"]["y"], 2, "workspace_mm.y"
+        ),
+        workspace_z_mm=_float_tuple(
+            data["workspace_mm"]["z"], 2, "workspace_mm.z"
+        ),
         depth_bbox_inset_ratio=float(data["depth"]["bbox_inset_ratio"]),
         depth_support_ring_scale=float(data["depth"]["support_ring_scale"]),
         depth_minimum_valid_pixels=int(data["depth"]["minimum_valid_pixels"]),
-        depth_maximum_height_m=float(data["depth"]["maximum_height_m"]),
+        depth_maximum_height_mm=float(data["depth"]["maximum_height_mm"]),
         zones=zones,
     )
     _validate_config(config)
@@ -122,21 +134,27 @@ def _validate_config(config: FrankaConfig) -> None:
         raise ValueError("depth support ring scale must be greater than one")
     if config.depth_minimum_valid_pixels <= 0:
         raise ValueError("depth minimum valid pixels must be positive")
-    if config.depth_maximum_height_m <= 0.0:
+    if config.gripper_speed_mm_s <= 0.0:
+        raise ValueError("gripper speed must be positive")
+    if config.depth_maximum_height_mm <= 0.0:
         raise ValueError("depth maximum height must be positive")
-    for lower, upper in (config.workspace_x, config.workspace_y, config.workspace_z):
+    for lower, upper in (
+        config.workspace_x_mm,
+        config.workspace_y_mm,
+        config.workspace_z_mm,
+    ):
         if lower >= upper:
             raise ValueError("workspace lower limit must be below its upper limit")
     for name, pose in config.zones.items():
         x, y, z = pose.translation
-        if not config.workspace_x[0] <= x <= config.workspace_x[1]:
+        if not config.workspace_x_mm[0] <= x <= config.workspace_x_mm[1]:
             raise ValueError(f"Franka zone {name} x is outside the workspace")
-        if not config.workspace_y[0] <= y <= config.workspace_y[1]:
+        if not config.workspace_y_mm[0] <= y <= config.workspace_y_mm[1]:
             raise ValueError(f"Franka zone {name} y is outside the workspace")
-        if not config.workspace_z[0] <= z <= config.workspace_z[1]:
+        if not config.workspace_z_mm[0] <= z <= config.workspace_z_mm[1]:
             raise ValueError(f"Franka zone {name} z is outside the workspace")
-    for object_class, height in config.place_heights.items():
-        if not config.workspace_z[0] <= height <= config.workspace_z[1]:
+    for object_class, height in config.place_heights_mm.items():
+        if not config.workspace_z_mm[0] <= height <= config.workspace_z_mm[1]:
             raise ValueError(
                 f"Franka place height for class {object_class} is outside the workspace"
             )
