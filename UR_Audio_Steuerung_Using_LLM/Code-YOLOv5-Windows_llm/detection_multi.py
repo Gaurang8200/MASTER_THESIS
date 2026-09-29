@@ -20,7 +20,7 @@ DETECTION_SCRIPT = 'yolov5/detect_multi_objects.py'  # Use new multi-object dete
 WEIGHTS = 'my_model.pt'
 ROBOT_RESOLUTION = (2560, 1472)
 UNIVERSAL_CAPTURE_RESOLUTION = (2560, 1472)
-FRANKA_CAPTURE_RESOLUTION = (1280, 800)
+FRANKA_CAPTURE_RESOLUTION = (1280, 720)
 IMAGE_RESOLUTION = UNIVERSAL_CAPTURE_RESOLUTION
 
 
@@ -108,7 +108,7 @@ class MultiObjectDetector:
             ):
                 raise RuntimeError(
                     f"Franka camera must provide {capture_width} x {capture_height} "
-                    "for conversion into the 640 x 400 calibration"
+                    "for the 1280 x 720 left mono calibration"
                 )
             
             # Use absolute path for photos directory

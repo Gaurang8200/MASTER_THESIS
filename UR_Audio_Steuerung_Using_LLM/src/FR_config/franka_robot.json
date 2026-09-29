@@ -20,7 +20,7 @@
   },
   "default_orientation": [1.0, 0.0, 0.0, 0.0],
   "calibration_directory": "FR_oak_calibration",
-  "calibration_image_size": [640, 400],
+  "calibration_image_size": [1280, 720],
   "mirror_x": true,
   "depth": {
     "bbox_inset_ratio": 0.25,
