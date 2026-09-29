@@ -128,7 +128,7 @@ class MultiObjectDetector:
             if camera is not None:
                 camera.close()
     
-    def detect_all_objects(self, image_path, confidence_threshold=0.85):
+    def detect_all_objects(self, image_path, confidence_threshold=0.25):
         """
         Run YOLOv5 detection on image and return all detected objects
         Also automatically selects first object for legacy compatibility
