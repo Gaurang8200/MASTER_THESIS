@@ -163,6 +163,7 @@ class FrankaAudioWorkflow:
         handler()
 
     def _move_home(self) -> None:
+        self._output(f"FRANKA MOVE HOME JOINTS: {self._config.home_joints}")
         self._arm.move_joints(self._config.home_joints)
 
     def _detect_object(self) -> None:
@@ -218,6 +219,9 @@ class FrankaAudioWorkflow:
                 self._config.depth_support_ring_scale,
                 self._config.depth_minimum_valid_pixels,
                 self._config.depth_maximum_height_m,
+                float(data["object_depth_mm"])
+                if data.get("object_depth_mm") is not None
+                else None,
             )
         elif not self._simulation:
             raise FileNotFoundError("Selected object has no synchronized OAK D depth capture")
@@ -233,7 +237,10 @@ class FrankaAudioWorkflow:
                 "OAK D DEPTH: "
                 f"object={measurement.object_depth_mm:.1f} mm, "
                 f"support={measurement.support_depth_mm:.1f} mm, "
-                f"height={measurement.height_m:.4f} m"
+                f"height={measurement.height_m:.4f} m, "
+                f"source={measurement.object_depth_source}, "
+                f"object_samples={measurement.object_sample_count}, "
+                f"support_samples={measurement.support_sample_count}"
             )
 
     def _move_above_selected_object(self) -> None:
@@ -358,6 +365,9 @@ class FrankaAudioWorkflow:
         self._output("FRANKA PICK LIFT: Completed")
 
     def _move_intermediate(self) -> None:
+        self._output(
+            f"FRANKA MOVE INTERMEDIATE JOINTS: {self._config.intermediate_joints}"
+        )
         self._arm.move_joints(self._config.intermediate_joints)
 
     def _select_zone(self, method_name: str) -> None:
@@ -407,6 +417,8 @@ class FrankaAudioWorkflow:
             raise RuntimeError("Franka target zone has not been selected")
         if not self._context.target_is_dynamic:
             self._validate_workspace(self._context.target_zone.translation)
+        x, y, z = self._context.target_zone.translation
+        self._output(f"FRANKA MOVE TARGET: x={x:.4f}, y={y:.4f}, z={z:.4f}")
         self._arm.move_pose(self._context.target_zone)
 
     def _release(self) -> None:
@@ -438,6 +450,7 @@ class FrankaAudioWorkflow:
         quaternion: Sequence[float],
     ) -> None:
         self._validate_workspace((x, y, z))
+        self._output(f"FRANKA MOVE CARTESIAN: x={x:.4f}, y={y:.4f}, z={z:.4f}")
         self._arm.move_pose(CartesianPose.create((x, y, z), quaternion))
 
     def _validate_workspace(self, translation: Sequence[float]) -> None:

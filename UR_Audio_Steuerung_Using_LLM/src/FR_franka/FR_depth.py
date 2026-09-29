@@ -14,6 +14,7 @@ class DepthMeasurement:
     height_m: float
     object_sample_count: int
     support_sample_count: int
+    object_depth_source: str
 
 
 def measure_object_height(
@@ -23,6 +24,7 @@ def measure_object_height(
     support_ring_scale: float,
     minimum_valid_pixels: int,
     maximum_height_m: float,
+    fallback_object_depth_mm: float | None = None,
 ) -> DepthMeasurement:
     if not depth_path.is_file():
         raise FileNotFoundError(f"OAK D depth capture does not exist: {depth_path}")
@@ -68,16 +70,24 @@ def measure_object_height(
     ring_mask[y1 - oy1:y2 - oy1, x1 - ox1:x2 - ox1] = False
     support_values = _valid_depth_values(ring[ring_mask])
 
-    if object_values.size < minimum_valid_pixels:
-        raise ValueError(
-            f"OAK D object area has only {object_values.size} valid depth pixels"
-        )
     if support_values.size < minimum_valid_pixels:
         raise ValueError(
             f"OAK D support ring has only {support_values.size} valid depth pixels"
         )
 
-    object_depth_mm = float(np.median(object_values))
+    if object_values.size >= minimum_valid_pixels:
+        object_depth_mm = float(np.median(object_values))
+        object_depth_source = "object_bbox"
+    elif (
+        fallback_object_depth_mm is not None
+        and 100.0 <= fallback_object_depth_mm <= 10000.0
+    ):
+        object_depth_mm = float(fallback_object_depth_mm)
+        object_depth_source = "gesture_point"
+    else:
+        raise ValueError(
+            f"OAK D object area has only {object_values.size} valid depth pixels"
+        )
     support_depth_mm = float(np.median(support_values))
     height_m = (support_depth_mm - object_depth_mm) / 1000.0
     if height_m < 0.0:
@@ -94,6 +104,7 @@ def measure_object_height(
         height_m=height_m,
         object_sample_count=int(object_values.size),
         support_sample_count=int(support_values.size),
+        object_depth_source=object_depth_source,
     )
 
 

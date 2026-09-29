@@ -492,19 +492,45 @@ def _write_selection_data(info, gesture_result):
        selected_object = matching[object_index]
    if selected_object is None:
        raise ValueError("No object was selected")
+   rgb_selection_pixel = selected_object["center"]
    left_mono_center = selected_object.get("left_mono_center")
    left_mono_frame_size = selected_object.get("left_mono_frame_size")
+   object_depth_mm = selected_object.get("object_depth_mm")
+   mapping_error = selected_object.get(
+       "left_mono_mapping_error",
+       "left mono mapping data is missing",
+   )
+   if info.get("selection_mode") == "gesture":
+       rgb_selection_pixel = gesture_result.get("fingertip_pixel")
+       left_mono_center = gesture_result.get("left_mono_pixel")
+       left_mono_frame_size = [
+           gesture_result.get("left_mono_frame_width"),
+           gesture_result.get("left_mono_frame_height"),
+       ]
+       object_depth_mm = gesture_result.get("fingertip_depth_mm")
+       mapping_error = gesture_result.get(
+           "left_mono_mapping_error",
+           "gesture point has no left mono mapping",
+       )
    if exec_mode.get() == "real" and (
-       not isinstance(left_mono_center, list)
+       not isinstance(rgb_selection_pixel, list)
+       or len(rgb_selection_pixel) != 2
+       or not isinstance(left_mono_center, list)
        or len(left_mono_center) != 2
        or not isinstance(left_mono_frame_size, list)
        or len(left_mono_frame_size) != 2
+       or object_depth_mm is None
    ):
-       mapping_error = selected_object.get(
-           "left_mono_mapping_error",
-           "left mono mapping data is missing",
-       )
        raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
+   if info.get("selection_mode") == "gesture":
+       print(
+           "OAK D GESTURE POINT: "
+           f"rgb_u={float(rgb_selection_pixel[0]):.2f}, "
+           f"rgb_v={float(rgb_selection_pixel[1]):.2f}, "
+           f"depth={float(object_depth_mm):.1f} mm, "
+           f"left_u={float(left_mono_center[0]):.2f}, "
+           f"left_v={float(left_mono_center[1]):.2f}"
+       )
    txt_dir = os.path.join(PRE, "txt_file")
    os.makedirs(txt_dir, exist_ok=True)
    depth_path = None
@@ -524,13 +550,13 @@ def _write_selection_data(info, gesture_result):
        "selected_object_class": selected_object["class_name"],
        "selected_object_confidence": selected_object["confidence"],
        "selection_timestamp": str(time.time()),
-       "original_center_x": selected_object["center"][0],
-       "original_center_y": selected_object["center"][1],
+       "original_center_x": rgb_selection_pixel[0],
+       "original_center_y": rgb_selection_pixel[1],
        "original_bbox": selected_object["bbox"],
        "original_confidence": selected_object["confidence"],
        "left_mono_center": left_mono_center,
        "left_mono_frame_size": left_mono_frame_size,
-       "object_depth_mm": selected_object.get("object_depth_mm"),
+       "object_depth_mm": object_depth_mm,
        "selection_phase": "overview",
        "selection_source": info.get("selection_mode", "speech"),
        "gesture_session_id": info.get("gesture_session_id"),
@@ -673,7 +699,7 @@ def _finish_recording():
            output_text.insert(tk.END, f"Transcription error: {error}\n")
            update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
            return
-   elif float(gesture_result.get("hold_seconds", 0.0)) < 10.0:
+   elif not gesture_was_fresh:
        output_text.insert(tk.END, "No speech or stable gesture was captured.\n")
        update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
        return
@@ -695,10 +721,8 @@ def _poll_gesture_session():
        return
    result = gesture_client.latest_result()
    if result is not None and _gesture_result_is_fresh(result):
-       held_seconds = float(result.get("hold_seconds", 0.0))
-       if held_seconds >= 10.0:
-           _finish_recording()
-           return
+       _finish_recording()
+       return
    gesture_poll_job = app.after(200, _poll_gesture_session)
 
 
@@ -894,7 +918,6 @@ def _collect_destination_methods():
                    chosen_zone is None
                    and chosen_point is None
                    and gesture_result is not None
-                   and float(gesture_result.get("hold_seconds", 0.0)) >= 10.0
                ):
                    chosen_point = gesture_result
                if time.monotonic() >= reminder_at:
