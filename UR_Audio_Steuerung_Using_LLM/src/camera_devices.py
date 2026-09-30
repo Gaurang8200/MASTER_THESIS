@@ -219,7 +219,11 @@ class RgbCameraStream:
         pipeline = None
         try:
             pipeline = dai.Pipeline(device)
-            rgb = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+            rgb = pipeline.create(dai.node.Camera).build(
+                dai.CameraBoardSocket.CAM_A,
+                sensorResolution=(self._width, self._height),
+                sensorFps=15,
+            )
             left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
             right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
             stereo = pipeline.create(dai.node.StereoDepth)
@@ -229,7 +233,6 @@ class RgbCameraStream:
             rgb_output = rgb.requestOutput(
                 size=(self._width, self._height),
                 type=dai.ImgFrame.Type.BGR888p,
-                resizeMode=dai.ImgResizeMode.LETTERBOX,
                 fps=15,
                 enableUndistortion=False,
             )
