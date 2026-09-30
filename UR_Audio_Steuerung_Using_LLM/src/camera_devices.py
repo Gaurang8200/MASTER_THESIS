@@ -11,6 +11,7 @@ import numpy as np
 
 CAMERA_DEVICE_ENV = "VISION_CAMERA_DEVICE"
 OAK_D_BACKEND = "oak_d"
+OAK_RGB_SENSOR_RESOLUTION = (1920, 1080)
 OAK_MONO_RESOLUTION = (1280, 720)
 
 
@@ -221,7 +222,7 @@ class RgbCameraStream:
             pipeline = dai.Pipeline(device)
             rgb = pipeline.create(dai.node.Camera).build(
                 dai.CameraBoardSocket.CAM_A,
-                sensorResolution=(self._width, self._height),
+                sensorResolution=OAK_RGB_SENSOR_RESOLUTION,
                 sensorFps=15,
             )
             left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)

@@ -4,6 +4,7 @@ import cv2
 import depthai as dai
 
 
+SENSOR_SIZE = (1920, 1080)
 FRAME_SIZE = (1280, 720)
 
 
@@ -14,7 +15,7 @@ def main() -> None:
     try:
         camera = pipeline.create(dai.node.Camera).build(
             dai.CameraBoardSocket.CAM_A,
-            sensorResolution=FRAME_SIZE,
+            sensorResolution=SENSOR_SIZE,
             sensorFps=30,
         )
         output = camera.requestOutput(
