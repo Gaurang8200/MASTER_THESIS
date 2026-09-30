@@ -126,23 +126,24 @@ class OakDepthPipelineTests(unittest.TestCase):
         self.assertEqual(measurement.height_mm, 50.0)
         self.assertEqual(0.0 + measurement.height_mm - 10.0, 40.0)
 
-    def test_ambiguous_surrounding_depth_is_rejected(self) -> None:
+    def test_largest_surrounding_depth_group_does_not_need_a_majority(self) -> None:
         depth = np.full((100, 100), 500, dtype=np.uint16)
-        depth[:, 50:] = 760
+        depth[:, 34:67] = 650
+        depth[:, 67:] = 760
         depth[30:70, 30:70] = 450
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "depth.npy"
             np.save(path, depth, allow_pickle=False)
-            with self.assertRaisesRegex(ValueError, "no dominant table depth"):
-                measure_object_height(
-                    path,
-                    (30, 30, 70, 70),
-                    0.25,
-                    1.6,
-                    25,
-                    10.0,
-                    250.0,
-                )
+            measurement = measure_object_height(
+                path,
+                (30, 30, 70, 70),
+                0.25,
+                1.6,
+                25,
+                10.0,
+                250.0,
+            )
+        self.assertEqual(measurement.table_depth_mm, 500.0)
 
     def test_invalid_depth_fails_closed(self) -> None:
         depth = np.zeros((40, 40), dtype=np.uint16)

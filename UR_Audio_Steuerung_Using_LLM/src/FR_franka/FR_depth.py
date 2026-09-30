@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -87,14 +88,10 @@ def measure_object_height(
         table_values,
         table_depth_tolerance_mm,
     )
-    if (
-        table_candidates.size < minimum_valid_pixels
-        or table_candidates.size * 2 <= table_values.size
-    ):
+    if table_candidates.size < minimum_valid_pixels:
         raise ValueError(
-            "OAK D surrounding area has no dominant table depth: "
-            f"largest group has {table_candidates.size} of "
-            f"{table_values.size} valid pixels"
+            "OAK D largest surrounding depth group has only "
+            f"{table_candidates.size} valid pixels"
         )
     table_depth_mm = float(np.median(table_candidates))
     table_depth_min_mm = float(np.min(table_candidates))
@@ -108,7 +105,7 @@ def measure_object_height(
         raise ValueError(
             f"OAK D object height {height_mm:.1f} mm exceeds the configured limit"
         )
-    return DepthMeasurement(
+    measurement = DepthMeasurement(
         object_depth_mm=object_depth_mm,
         table_depth_mm=table_depth_mm,
         height_mm=height_mm,
@@ -117,6 +114,14 @@ def measure_object_height(
         table_depth_min_mm=table_depth_min_mm,
         table_depth_max_mm=table_depth_max_mm,
     )
+    _show_depth_measurement(
+        depth,
+        (x1, y1, x2, y2),
+        (x1 + inset_x, y1 + inset_y, x2 - inset_x, y2 - inset_y),
+        outer,
+        measurement,
+    )
+    return measurement
 
 
 def _clamped_box(
@@ -151,3 +156,67 @@ def _dominant_depth_values(values: np.ndarray, tolerance_mm: float) -> np.ndarra
     cluster = sorted_values[best_start:best_stop]
     center_mm = (cluster[0] + cluster[-1]) / 2.0
     return sorted_values[np.abs(sorted_values - center_mm) <= tolerance_mm]
+
+
+def _show_depth_measurement(
+    depth: np.ndarray,
+    object_box: tuple[int, int, int, int],
+    object_sample_box: tuple[int, int, int, int],
+    table_box: tuple[int, int, int, int],
+    measurement: DepthMeasurement,
+) -> None:
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        return
+
+    import cv2
+
+    valid = _valid_depth_values(depth)
+    near_mm, far_mm = np.percentile(valid, (5.0, 95.0))
+    span_mm = max(float(far_mm - near_mm), 1.0)
+    scaled = np.clip((far_mm - depth) * 255.0 / span_mm, 0.0, 255.0)
+    visual = cv2.applyColorMap(scaled.astype(np.uint8), cv2.COLORMAP_TURBO)
+    visual[depth == 0] = 0
+
+    x1, y1, x2, y2 = object_box
+    sx1, sy1, sx2, sy2 = object_sample_box
+    ox1, oy1, ox2, oy2 = table_box
+    table_mask = np.zeros(depth.shape, dtype=bool)
+    table_mask[oy1:oy2, ox1:ox2] = True
+    table_mask[y1:y2, x1:x2] = False
+    table_mask &= (depth >= measurement.table_depth_min_mm) & (
+        depth <= measurement.table_depth_max_mm
+    )
+    visual[table_mask] = (255, 0, 0)
+
+    cv2.rectangle(visual, (ox1, oy1), (ox2 - 1, oy2 - 1), (255, 0, 0), 2)
+    cv2.rectangle(visual, (x1, y1), (x2 - 1, y2 - 1), (255, 0, 0), 2)
+    cv2.rectangle(visual, (sx1, sy1), (sx2 - 1, sy2 - 1), (0, 255, 0), 2)
+    cv2.putText(
+        visual,
+        f"Green object {measurement.object_depth_mm:.1f} mm",
+        (20, 35),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0),
+        2,
+    )
+    cv2.putText(
+        visual,
+        f"Blue table {measurement.table_depth_mm:.1f} mm",
+        (20, 70),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 0, 0),
+        2,
+    )
+    cv2.putText(
+        visual,
+        f"Object height {measurement.height_mm:.1f} mm",
+        (20, 105),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2,
+    )
+    cv2.imshow("OAK D Depth Measurement 1280 x 720", visual)
+    cv2.waitKey(1)
