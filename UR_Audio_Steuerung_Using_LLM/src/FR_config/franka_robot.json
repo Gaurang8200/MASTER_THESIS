@@ -21,7 +21,6 @@
   "calibration_image_size": [1280, 720],
   "mirror_x": false,
   "depth": {
-    "bbox_inset_ratio": 0.25,
     "table_ring_scale": 1.6,
     "minimum_valid_pixels": 25,
     "table_depth_tolerance_mm": 10.0,

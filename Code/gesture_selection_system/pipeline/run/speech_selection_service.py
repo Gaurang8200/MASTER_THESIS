@@ -98,7 +98,6 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
 def _left_mono_payload(
     camera: CameraStream,
     sensor_point: tuple[float, float] | None,
-    object_box: tuple[float, float, float, float] | None = None,
     depth_field: str = "fingertip_depth_mm",
 ) -> dict[str, object]:
     payload: dict[str, object] = {
@@ -112,10 +111,7 @@ def _left_mono_payload(
     if sensor_point is None:
         return payload
     try:
-        left_point, depth_mm, left_size = camera.project_sensor_point_to_left(
-            sensor_point,
-            object_box,
-        )
+        left_point, depth_mm, left_size = camera.project_sensor_point_to_left(sensor_point)
     except (RuntimeError, ValueError) as error:
         payload["left_mono_mapping_error"] = str(error)
         return payload
@@ -347,7 +343,6 @@ def run_session(
             mapping = _left_mono_payload(
                 camera,
                 mapping_point,
-                sensor_object_box,
                 depth_field,
             )
             mapping_ready = mapping["left_mono_mapping_error"] is None

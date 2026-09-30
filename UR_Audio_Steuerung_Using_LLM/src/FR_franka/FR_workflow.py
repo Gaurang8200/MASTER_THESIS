@@ -215,7 +215,6 @@ class FrankaAudioWorkflow:
             self._context.depth_measurement = measure_object_height(
                 Path(str(depth_path_value)),
                 data["original_bbox"],
-                self._config.depth_bbox_inset_ratio,
                 self._config.depth_table_ring_scale,
                 self._config.depth_minimum_valid_pixels,
                 self._config.depth_table_tolerance_mm,

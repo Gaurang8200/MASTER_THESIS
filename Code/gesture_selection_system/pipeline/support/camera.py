@@ -20,7 +20,7 @@ AUDIO_PROJECT_ROOT = REPOSITORY_ROOT / "UR_Audio_Steuerung_Using_LLM"
 if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
-from src.camera_devices import OakDFrame, RgbCameraStream, median_depth_for_bbox
+from src.camera_devices import OakDFrame, RgbCameraStream, depth_at_pixel
 
 from config import CameraConfig
 
@@ -76,42 +76,10 @@ class CameraStream:
     def project_sensor_point_to_left(
         self,
         point: tuple[float, float],
-        object_box: tuple[float, float, float, float] | None = None,
     ) -> tuple[tuple[float, float], float, tuple[int, int]]:
         if self._latest_frame is None:
             raise RuntimeError("OAK D frame geometry is not available")
-        x_value, y_value = point
-        if object_box is not None:
-            depth_mm = median_depth_for_bbox(
-                self._latest_frame.depth_mm,
-                object_box,
-                inset_ratio=0.25,
-                minimum_valid_pixels=5,
-            )
-        else:
-            sample_boxes = [
-                (
-                    x_value - radius,
-                    y_value - radius,
-                    x_value + radius,
-                    y_value + radius,
-                )
-                for radius in (5.0, 12.0, 24.0)
-            ]
-            depth_error: ValueError | None = None
-            for sample_box in sample_boxes:
-                try:
-                    depth_mm = median_depth_for_bbox(
-                        self._latest_frame.depth_mm,
-                        sample_box,
-                        inset_ratio=0.0,
-                        minimum_valid_pixels=5,
-                    )
-                    break
-                except ValueError as error:
-                    depth_error = error
-            else:
-                raise depth_error or ValueError("OAK D has no valid depth near the point")
+        depth_mm = depth_at_pixel(self._latest_frame.depth_mm, point)
         left_point = self._latest_frame.project_rgb_point_to_left(point, depth_mm)
         left_height, left_width = self._latest_frame.left_mono.shape[:2]
         return left_point, depth_mm, (left_width, left_height)

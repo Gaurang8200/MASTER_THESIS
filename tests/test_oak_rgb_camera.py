@@ -16,7 +16,7 @@ for folder in (AUDIO_ROOT, PIPELINE_ROOT / "support", PIPELINE_ROOT / "detection
 
 from config import ObjectModelConfig, resolve_device
 from object_detector import Yolov5ObjectDetector
-from src.camera_devices import RgbCameraStream, median_depth_for_bbox
+from src.camera_devices import RgbCameraStream, depth_at_pixel
 
 
 FRAME_SIZE = (1280, 720)
@@ -59,8 +59,9 @@ def main() -> None:
             display = frame.copy()
             for detected_object in detector.get_objects(frame):
                 box = detected_object.box.as_int_tuple()
+                center = detected_object.box.center
                 try:
-                    depth_mm = median_depth_for_bbox(rgbd_frame.depth_mm, box)
+                    depth_mm = depth_at_pixel(rgbd_frame.depth_mm, center)
                     depth_text = f"{depth_mm:.0f} mm"
                 except ValueError:
                     depth_text = "depth unavailable"
@@ -91,6 +92,14 @@ def _draw_object(
     x1, y1, x2, y2 = box
     color = (0, 255, 0)
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+    cv2.drawMarker(
+        frame,
+        (int(round((x1 + x2) / 2.0)), int(round((y1 + y2) / 2.0))),
+        (0, 255, 255),
+        cv2.MARKER_CROSS,
+        16,
+        2,
+    )
     cv2.putText(
         frame,
         f"{class_name} {confidence:.2f}  {depth_text}",

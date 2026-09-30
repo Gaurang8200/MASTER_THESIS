@@ -56,35 +56,25 @@ class OakDFrame:
         return float(projected.x), float(projected.y)
 
 
-def median_depth_for_bbox(
+def depth_at_pixel(
     depth_mm: np.ndarray,
-    bbox: tuple[float, float, float, float] | list[float],
-    inset_ratio: float = 0.25,
-    minimum_valid_pixels: int = 25,
+    point: tuple[float, float] | list[float],
 ) -> float:
     if depth_mm.ndim != 2:
         raise ValueError("OAK D depth map must be a two dimensional array")
-    if len(bbox) != 4:
-        raise ValueError("Object bounding box must contain four values")
-    if not 0.0 <= inset_ratio < 0.5:
-        raise ValueError("Depth bounding box inset ratio must be below one half")
+    if len(point) != 2:
+        raise ValueError("OAK D depth point must contain two values")
     height, width = depth_mm.shape
-    x1 = max(0, min(width - 1, int(round(float(bbox[0])))))
-    y1 = max(0, min(height - 1, int(round(float(bbox[1])))))
-    x2 = max(x1 + 1, min(width, int(round(float(bbox[2])))))
-    y2 = max(y1 + 1, min(height, int(round(float(bbox[3])))))
-    inset_x = int(round((x2 - x1) * inset_ratio))
-    inset_y = int(round((y2 - y1) * inset_ratio))
-    values = np.asarray(
-        depth_mm[y1 + inset_y:y2 - inset_y, x1 + inset_x:x2 - inset_x],
-        dtype=np.float64,
-    ).reshape(-1)
-    valid = values[(values >= 100.0) & (values <= 10000.0) & np.isfinite(values)]
-    if valid.size < minimum_valid_pixels:
+    x = int(round(float(point[0])))
+    y = int(round(float(point[1])))
+    if not 0 <= x < width or not 0 <= y < height:
+        raise ValueError(f"OAK D depth pixel {x}, {y} is outside the frame")
+    value = float(depth_mm[y, x])
+    if not np.isfinite(value) or not 100.0 <= value <= 10000.0:
         raise ValueError(
-            f"OAK D object area has only {valid.size} valid depth pixels"
+            f"OAK D depth pixel {x}, {y} has invalid value {value:.1f} mm"
         )
-    return float(np.median(valid))
+    return value
 
 
 def map_detections_to_left_mono(
@@ -96,9 +86,8 @@ def map_detections_to_left_mono(
     for detection in detections:
         mapped = dict(detection)
         try:
-            bbox = [float(value) for value in detection["bbox"]]
             center = [float(value) for value in detection["center"]]
-            object_depth_mm = median_depth_for_bbox(frame.depth_mm, bbox)
+            object_depth_mm = depth_at_pixel(frame.depth_mm, center)
             left_center = frame.project_rgb_point_to_left(
                 (center[0], center[1]),
                 object_depth_mm,

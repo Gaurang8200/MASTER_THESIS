@@ -35,7 +35,6 @@ class FrankaConfig:
     workspace_x_mm: tuple[float, float]
     workspace_y_mm: tuple[float, float]
     workspace_z_mm: tuple[float, float]
-    depth_bbox_inset_ratio: float
     depth_table_ring_scale: float
     depth_minimum_valid_pixels: int
     depth_table_tolerance_mm: float
@@ -107,7 +106,6 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
         workspace_z_mm=_float_tuple(
             data["workspace_mm"]["z"], 2, "workspace_mm.z"
         ),
-        depth_bbox_inset_ratio=float(data["depth"]["bbox_inset_ratio"]),
         depth_table_ring_scale=float(data["depth"]["table_ring_scale"]),
         depth_minimum_valid_pixels=int(data["depth"]["minimum_valid_pixels"]),
         depth_table_tolerance_mm=float(data["depth"]["table_depth_tolerance_mm"]),
@@ -125,8 +123,6 @@ def _validate_config(config: FrankaConfig) -> None:
         raise ValueError("dynamics_factor must be between zero and one")
     if config.calibration_width <= 0 or config.calibration_height <= 0:
         raise ValueError("calibration image dimensions must be positive")
-    if not 0.0 <= config.depth_bbox_inset_ratio < 0.5:
-        raise ValueError("depth bbox inset ratio must be below one half")
     if config.depth_table_ring_scale <= 1.0:
         raise ValueError("depth table ring scale must be greater than one")
     if config.depth_minimum_valid_pixels <= 0:

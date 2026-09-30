@@ -7,6 +7,8 @@ from typing import Sequence
 
 import numpy as np
 
+from ..camera_devices import depth_at_pixel
+
 
 @dataclass(frozen=True)
 class DepthMeasurement:
@@ -22,7 +24,6 @@ class DepthMeasurement:
 def measure_object_height(
     depth_path: Path,
     bbox: Sequence[float],
-    inset_ratio: float,
     table_ring_scale: float,
     minimum_valid_pixels: int,
     table_depth_tolerance_mm: float,
@@ -35,8 +36,6 @@ def measure_object_height(
         raise ValueError("OAK D depth capture must be a two dimensional array")
     if len(bbox) != 4:
         raise ValueError("Selected object bounding box must contain four values")
-    if not 0.0 <= inset_ratio < 0.5:
-        raise ValueError("Depth bounding box inset ratio must be below one half")
     if table_ring_scale <= 1.0:
         raise ValueError("Depth table ring scale must be greater than one")
     if minimum_valid_pixels <= 0:
@@ -48,11 +47,8 @@ def measure_object_height(
     x1, y1, x2, y2 = _clamped_box(bbox, width, height)
     box_width = x2 - x1
     box_height = y2 - y1
-    inset_x = int(round(box_width * inset_ratio))
-    inset_y = int(round(box_height * inset_ratio))
-    object_values = _valid_depth_values(
-        depth[y1 + inset_y:y2 - inset_y, x1 + inset_x:x2 - inset_x]
-    )
+    object_center = ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+    object_depth_mm = depth_at_pixel(depth, object_center)
 
     expanded_width = box_width * table_ring_scale
     expanded_height = box_height * table_ring_scale
@@ -79,11 +75,6 @@ def measure_object_height(
             f"OAK D table ring has only {table_values.size} valid depth pixels"
         )
 
-    if object_values.size < minimum_valid_pixels:
-        raise ValueError(
-            f"OAK D object area has only {object_values.size} valid depth pixels"
-        )
-    object_depth_mm = float(np.median(object_values))
     table_candidates = _dominant_depth_values(
         table_values,
         table_depth_tolerance_mm,
@@ -109,7 +100,7 @@ def measure_object_height(
         object_depth_mm=object_depth_mm,
         table_depth_mm=table_depth_mm,
         height_mm=height_mm,
-        object_sample_count=int(object_values.size),
+        object_sample_count=1,
         table_sample_count=int(table_candidates.size),
         table_depth_min_mm=table_depth_min_mm,
         table_depth_max_mm=table_depth_max_mm,
@@ -117,7 +108,7 @@ def measure_object_height(
     _show_depth_measurement(
         depth,
         (x1, y1, x2, y2),
-        (x1 + inset_x, y1 + inset_y, x2 - inset_x, y2 - inset_y),
+        object_center,
         outer,
         measurement,
     )
@@ -161,7 +152,7 @@ def _dominant_depth_values(values: np.ndarray, tolerance_mm: float) -> np.ndarra
 def _show_depth_measurement(
     depth: np.ndarray,
     object_box: tuple[int, int, int, int],
-    object_sample_box: tuple[int, int, int, int],
+    object_pixel: tuple[float, float],
     table_box: tuple[int, int, int, int],
     measurement: DepthMeasurement,
 ) -> None:
@@ -178,7 +169,7 @@ def _show_depth_measurement(
     visual[depth == 0] = 0
 
     x1, y1, x2, y2 = object_box
-    sx1, sy1, sx2, sy2 = object_sample_box
+    object_x, object_y = int(round(object_pixel[0])), int(round(object_pixel[1]))
     ox1, oy1, ox2, oy2 = table_box
     table_mask = np.zeros(depth.shape, dtype=bool)
     table_mask[oy1:oy2, ox1:ox2] = True
@@ -190,10 +181,17 @@ def _show_depth_measurement(
 
     cv2.rectangle(visual, (ox1, oy1), (ox2 - 1, oy2 - 1), (255, 0, 0), 2)
     cv2.rectangle(visual, (x1, y1), (x2 - 1, y2 - 1), (255, 0, 0), 2)
-    cv2.rectangle(visual, (sx1, sy1), (sx2 - 1, sy2 - 1), (0, 255, 0), 2)
+    cv2.drawMarker(
+        visual,
+        (object_x, object_y),
+        (0, 255, 0),
+        cv2.MARKER_CROSS,
+        16,
+        2,
+    )
     cv2.putText(
         visual,
-        f"Green object {measurement.object_depth_mm:.1f} mm",
+        f"Green center pixel {measurement.object_depth_mm:.1f} mm",
         (20, 35),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,
