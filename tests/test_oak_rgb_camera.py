@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import sys
+from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import cv2
+import depthai as dai
 import numpy as np
 
 
@@ -16,11 +19,103 @@ for folder in (AUDIO_ROOT, PIPELINE_ROOT / "support", PIPELINE_ROOT / "detection
 
 from config import ObjectModelConfig, resolve_device
 from object_detector import Yolov5ObjectDetector
-from src.camera_devices import RgbCameraStream, depth_at_pixel
+from src.camera_devices import depth_at_pixel
 
 
 FRAME_SIZE = (1280, 720)
+RGB_SENSOR_SIZE = (1920, 1080)
+STEREO_SIZE = (640, 400)
 YOLO_ROOT = AUDIO_ROOT / "Code-YOLOv5-Windows_llm" / "yolov5"
+
+
+class ShortRangeRgbdCamera:
+    def __init__(self) -> None:
+        self._device: Any = None
+        self._pipeline: Any = None
+        self._queue: Any = None
+
+    def start(self) -> None:
+        device = dai.Device()
+        pipeline = None
+        try:
+            pipeline = dai.Pipeline(device)
+            rgb = pipeline.create(dai.node.Camera).build(
+                dai.CameraBoardSocket.CAM_A,
+                sensorResolution=RGB_SENSOR_SIZE,
+                sensorFps=15,
+            )
+            left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+            right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+            stereo = pipeline.create(dai.node.StereoDepth)
+            stereo.setSubpixel(False)
+            stereo.setExtendedDisparity(True)
+            sync = pipeline.create(dai.node.Sync)
+            sync.setSyncThreshold(timedelta(milliseconds=34))
+
+            rgb_output = rgb.requestOutput(
+                size=FRAME_SIZE,
+                type=dai.ImgFrame.Type.BGR888p,
+                fps=15,
+                enableUndistortion=False,
+            )
+            left_output = left.requestOutput(size=STEREO_SIZE, fps=15)
+            right_output = right.requestOutput(size=STEREO_SIZE, fps=15)
+            left_output.link(stereo.left)
+            right_output.link(stereo.right)
+            rgb_output.link(sync.inputs["rgb"])
+            if device.getPlatform() == dai.Platform.RVC4:
+                align = pipeline.create(dai.node.ImageAlign)
+                stereo.depth.link(align.input)
+                rgb_output.link(align.inputAlignTo)
+                align.outputAligned.link(sync.inputs["depth_aligned"])
+            else:
+                rgb_output.link(stereo.inputAlignTo)
+                stereo.depth.link(sync.inputs["depth_aligned"])
+
+            queue = sync.out.createOutputQueue(maxSize=2, blocking=False)
+            pipeline.start()
+        except Exception:
+            try:
+                if pipeline is not None:
+                    pipeline.stop()
+            finally:
+                device.close()
+            raise
+        self._device = device
+        self._pipeline = pipeline
+        self._queue = queue
+
+    def read(self) -> tuple[np.ndarray, np.ndarray] | None:
+        if self._queue is None:
+            raise RuntimeError("Short range OAK D camera is not open")
+        messages = self._queue.get()
+        if messages is None:
+            return None
+        color_message = messages["rgb"]
+        depth_message = messages["depth_aligned"]
+        if color_message is None or depth_message is None:
+            return None
+        color = color_message.getCvFrame()
+        depth_mm = depth_message.getFrame()
+        if color is None or depth_mm is None:
+            return None
+        if color.shape[:2] != depth_mm.shape[:2]:
+            raise RuntimeError("Aligned depth dimensions do not match RGB")
+        return color, depth_mm
+
+    def close(self) -> None:
+        pipeline = self._pipeline
+        device = self._device
+        self._pipeline = None
+        self._device = None
+        self._queue = None
+        try:
+            if pipeline is not None:
+                pipeline.stop()
+                pipeline.wait()
+        finally:
+            if device is not None:
+                device.close()
 
 
 def main() -> None:
@@ -35,7 +130,7 @@ def main() -> None:
         device=resolve_device("auto"),
         confidence=0.25,
     )
-    camera = RgbCameraStream(*FRAME_SIZE)
+    camera = ShortRangeRgbdCamera()
 
     try:
         detector.start()
@@ -43,17 +138,20 @@ def main() -> None:
         size_printed = False
 
         while True:
-            rgbd_frame = camera.read_rgbd()
+            rgbd_frame = camera.read()
             if rgbd_frame is None:
                 continue
-            frame = rgbd_frame.color
+            frame, depth_mm = rgbd_frame
             height, width = frame.shape[:2]
             if (width, height) != FRAME_SIZE:
                 raise RuntimeError(
                     f"OAK D returned {width} x {height}, expected 1280 x 720"
                 )
             if not size_printed:
-                print(f"OAK D RGB and aligned depth: {width} x {height}")
+                print(
+                    "OAK D test mode: RGB 1280 x 720, stereo 640 x 400, "
+                    "Extended Disparity"
+                )
                 size_printed = True
 
             display = frame.copy()
@@ -61,8 +159,8 @@ def main() -> None:
                 box = detected_object.box.as_int_tuple()
                 center = detected_object.box.center
                 try:
-                    depth_mm = depth_at_pixel(rgbd_frame.depth_mm, center)
-                    depth_text = f"{depth_mm:.0f} mm"
+                    object_depth_mm = depth_at_pixel(depth_mm, center)
+                    depth_text = f"{object_depth_mm:.0f} mm"
                 except ValueError:
                     depth_text = "depth unavailable"
                 _draw_object(
