@@ -497,6 +497,7 @@ def _write_selection_data(info, gesture_result):
    left_mono_center = selected_object.get("left_mono_center")
    left_mono_frame_size = selected_object.get("left_mono_frame_size")
    object_depth_mm = selected_object.get("object_depth_mm")
+   object_depth_sample_count = selected_object.get("object_depth_sample_count")
    selection_bbox = selected_object["bbox"]
    mapping_error = selected_object.get(
        "left_mono_mapping_error",
@@ -520,6 +521,7 @@ def _write_selection_data(info, gesture_result):
            gesture_result.get("left_mono_frame_height"),
        ]
        object_depth_mm = gesture_result.get("object_depth_mm")
+       object_depth_sample_count = gesture_result.get("object_depth_sample_count")
        mapping_error = gesture_result.get(
            "left_mono_mapping_error",
            "gesture point has no left mono mapping",
@@ -532,6 +534,7 @@ def _write_selection_data(info, gesture_result):
        or not isinstance(left_mono_frame_size, list)
        or len(left_mono_frame_size) != 2
        or object_depth_mm is None
+       or object_depth_sample_count is None
    ):
        raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
    if gesture_selection:
@@ -572,6 +575,7 @@ def _write_selection_data(info, gesture_result):
        "left_mono_center": left_mono_center,
        "left_mono_frame_size": left_mono_frame_size,
        "object_depth_mm": object_depth_mm,
+       "object_depth_sample_count": object_depth_sample_count,
        "selection_phase": "overview",
        "selection_source": info.get("selection_mode", "speech"),
        "gesture_session_id": info.get("gesture_session_id"),
@@ -766,7 +770,7 @@ def toggle_recording():
 
    def start_gesture_capture():
        try:
-           session = gesture_client.start(selection_kind="object", hold_seconds=5.0)
+           session = gesture_client.start(selection_kind="object", hold_seconds=3.0)
            gesture_outcome["session"] = session
        except Exception as error:
            gesture_outcome["error"] = str(error)

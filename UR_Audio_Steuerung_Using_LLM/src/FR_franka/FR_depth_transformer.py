@@ -3,19 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import cv2
 import numpy as np
 
+from ..camera_devices import MIN_DEPTH_MM, MIN_OBJECT_DEPTH_PIXELS
 from .FR_models import PixelPoint
-
-
-DEPTH_PATCH_RADIUS_PX = 1
-MIN_OBJECT_DEPTH_PIXELS = 3
-MIN_DEPTH_MM = 100.0
-TABLE_DEPTH_MIN_MM = 495.0
-OBJECT_DEPTH_CLUSTER_SPREAD_MM = 10.0
 
 
 @dataclass(frozen=True)
@@ -24,61 +17,6 @@ class CalibratedDepth:
     camera_point_mm: tuple[float, float, float]
     robot_base_z_mm: float
     sample_count: int
-
-
-def measure_object_depth(
-    depth_path: Path,
-    bbox: Sequence[float],
-) -> tuple[float, int]:
-    if not depth_path.is_file():
-        raise FileNotFoundError(f"OAK D depth capture does not exist: {depth_path}")
-    depth = np.load(depth_path, allow_pickle=False)
-    if depth.ndim != 2:
-        raise ValueError("OAK D depth capture must be a two dimensional array")
-    if len(bbox) != 4:
-        raise ValueError("Selected object bounding box must contain four values")
-
-    x1, y1, x2, y2 = _clamped_box(bbox, depth.shape[1], depth.shape[0])
-    box_width = x2 - x1
-    box_height = y2 - y1
-    center_x = x1 + box_width / 2.0
-    center_y = y1 + box_height / 2.0
-    sample_centers = (
-        (center_x, center_y),
-        (x1 + box_width * 0.25, center_y),
-        (x1 + box_width * 0.75, center_y),
-        (center_x, y1 + box_height * 0.25),
-        (center_x, y1 + box_height * 0.75),
-    )
-
-    sampled_pixels: set[tuple[int, int]] = set()
-    object_depths: list[float] = []
-    for sample_x, sample_y in sample_centers:
-        pixel_x = int(round(sample_x))
-        pixel_y = int(round(sample_y))
-        patch_x1 = max(x1, pixel_x - DEPTH_PATCH_RADIUS_PX)
-        patch_x2 = min(x2, pixel_x + DEPTH_PATCH_RADIUS_PX + 1)
-        patch_y1 = max(y1, pixel_y - DEPTH_PATCH_RADIUS_PX)
-        patch_y2 = min(y2, pixel_y + DEPTH_PATCH_RADIUS_PX + 1)
-        for y in range(patch_y1, patch_y2):
-            for x in range(patch_x1, patch_x2):
-                if (x, y) in sampled_pixels:
-                    continue
-                sampled_pixels.add((x, y))
-                value = float(depth[y, x])
-                if not np.isfinite(value) or value < MIN_DEPTH_MM:
-                    continue
-                if value >= TABLE_DEPTH_MIN_MM:
-                    continue
-                object_depths.append(value)
-
-    cluster = _nearest_depth_cluster(object_depths)
-    if cluster.size < MIN_OBJECT_DEPTH_PIXELS:
-        raise ValueError(
-            "OAK D object area has fewer than three consistent depth pixels"
-        )
-    return float(np.median(cluster)), int(cluster.size)
-
 
 class FrankaDepthTransformer:
     def __init__(
@@ -155,30 +93,6 @@ class FrankaDepthTransformer:
         if not 0.0 <= y < self._calibration_size[1]:
             raise ValueError("left mono pixel y is outside the calibrated image")
         return PixelPoint(x, y)
-
-
-def _clamped_box(
-    bbox: Sequence[float],
-    width: int,
-    height: int,
-) -> tuple[int, int, int, int]:
-    x1 = max(0, min(width - 1, int(round(float(bbox[0])))))
-    y1 = max(0, min(height - 1, int(round(float(bbox[1])))))
-    x2 = max(x1 + 1, min(width, int(round(float(bbox[2])))))
-    y2 = max(y1 + 1, min(height, int(round(float(bbox[3])))))
-    return x1, y1, x2, y2
-
-
-def _nearest_depth_cluster(depths_mm: list[float]) -> np.ndarray:
-    ordered = np.sort(np.asarray(depths_mm, dtype=float))
-    for start, minimum_depth in enumerate(ordered):
-        cluster = ordered[start:][
-            ordered[start:] - minimum_depth <= OBJECT_DEPTH_CLUSTER_SPREAD_MM
-        ]
-        if cluster.size >= MIN_OBJECT_DEPTH_PIXELS:
-            return cluster
-    return np.empty(0, dtype=float)
-
 
 def _read_camera_calibration(path: Path) -> tuple[np.ndarray, np.ndarray]:
     data = _read_json(path)
