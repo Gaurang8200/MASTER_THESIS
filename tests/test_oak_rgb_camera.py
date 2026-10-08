@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from collections import deque
+from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -33,39 +34,78 @@ MIN_VALID_DEPTH_FRACTION = 0.25
 MIN_DEPTH_MM = 100.0
 MAX_DEPTH_MM = 10000.0
 MAX_TEMPORAL_DEVIATION_MM = 25.0
+MIN_STATIONARY_BOX_IOU = 0.80
+
+
+@dataclass
+class _ObjectDepthState:
+    valid_depths: deque[float] = field(
+        default_factory=lambda: deque(maxlen=DEPTH_HISTORY_FRAMES)
+    )
+    anchor_box: tuple[int, int, int, int] | None = None
+    stable_depth_mm: float | None = None
 
 
 class ObjectDepthStabilizer:
     def __init__(self) -> None:
-        self._history: dict[str, deque[float | None]] = {}
+        self._states: dict[str, _ObjectDepthState] = {}
 
-    def update(self, object_id: str, depth_mm: float | None) -> float:
-        history = self._history.setdefault(
-            object_id,
-            deque(maxlen=DEPTH_HISTORY_FRAMES),
-        )
-        history.append(depth_mm)
-        valid_depths = np.asarray(
-            [value for value in history if value is not None],
-            dtype=np.float32,
-        )
+    def update(
+        self,
+        object_id: str,
+        box: tuple[int, int, int, int],
+        depth_mm: float | None,
+    ) -> float:
+        state = self._states.setdefault(object_id, _ObjectDepthState())
+        if (
+            state.anchor_box is not None
+            and _box_iou(state.anchor_box, box) < MIN_STATIONARY_BOX_IOU
+        ):
+            state = _ObjectDepthState(anchor_box=box)
+            self._states[object_id] = state
+        elif state.anchor_box is None:
+            state.anchor_box = box
+
+        if depth_mm is not None:
+            state.valid_depths.append(depth_mm)
+        valid_depths = np.asarray(state.valid_depths, dtype=np.float32)
         if valid_depths.size < MIN_VALID_HISTORY_FRAMES:
-            raise ValueError("not enough recent valid depth frames")
+            if state.stable_depth_mm is None:
+                raise ValueError("not enough valid depth measurements")
+            return state.stable_depth_mm
 
-        stable_depth_mm = float(np.median(valid_depths))
+        candidate_depth_mm = float(np.median(valid_depths))
         median_deviation_mm = float(
-            np.median(np.abs(valid_depths - stable_depth_mm))
+            np.median(np.abs(valid_depths - candidate_depth_mm))
         )
-        if median_deviation_mm > MAX_TEMPORAL_DEVIATION_MM:
-            raise ValueError("recent depth frames are inconsistent")
-        return stable_depth_mm
+        if median_deviation_mm <= MAX_TEMPORAL_DEVIATION_MM:
+            state.stable_depth_mm = candidate_depth_mm
+        if state.stable_depth_mm is None:
+            raise ValueError("valid depth measurements are inconsistent")
+        return state.stable_depth_mm
 
     def retain(self, active_object_ids: set[str]) -> None:
-        self._history = {
-            object_id: history
-            for object_id, history in self._history.items()
+        self._states = {
+            object_id: state
+            for object_id, state in self._states.items()
             if object_id in active_object_ids
         }
+
+
+def _box_iou(
+    first: tuple[int, int, int, int],
+    second: tuple[int, int, int, int],
+) -> float:
+    left = max(first[0], second[0])
+    top = max(first[1], second[1])
+    right = min(first[2], second[2])
+    bottom = min(first[3], second[3])
+    if right <= left or bottom <= top:
+        return 0.0
+    intersection = (right - left) * (bottom - top)
+    first_area = (first[2] - first[0]) * (first[3] - first[1])
+    second_area = (second[2] - second[0]) * (second[3] - second[1])
+    return intersection / (first_area + second_area - intersection)
 
 
 def median_depth_near_point(
@@ -240,11 +280,12 @@ def main() -> None:
                     spatial_depth_mm = median_depth_near_point(depth_mm, center)
                     object_depth_mm = depth_stabilizer.update(
                         detected_object.object_id,
+                        box,
                         spatial_depth_mm,
                     )
                     depth_text = f"{object_depth_mm:.0f} mm"
                 except ValueError:
-                    depth_text = "depth unavailable"
+                    depth_text = "measuring depth"
                 _draw_object(
                     display,
                     box,
