@@ -385,7 +385,7 @@ def run_session(
                     selected = tracked
                     hand_clear_since = observed_at
                     display_reason = "selected, keep hand clear"
-                elif observed_at - hand_clear_since < 0.5:
+                elif observed_at - hand_clear_since < 2.0:
                     selected = tracked
                     display_reason = "selected, keep hand clear"
                 else:
