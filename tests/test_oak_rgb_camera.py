@@ -21,12 +21,16 @@ for folder in (AUDIO_ROOT, PIPELINE_ROOT / "support", PIPELINE_ROOT / "detection
 
 from config import ObjectModelConfig, resolve_device
 from object_detector import Yolov5ObjectDetector
-from src.camera_devices import object_depth_from_box, stable_depth_from_history
+from src.camera_devices import (
+    OAK_STEREO_RESOLUTION,
+    configure_short_range_stereo,
+    object_depth_from_box,
+    stable_depth_from_history,
+)
 
 
 FRAME_SIZE = (1280, 720)
 RGB_SENSOR_SIZE = (1920, 1080)
-STEREO_SIZE = (640, 400)
 YOLO_ROOT = AUDIO_ROOT / "Code-YOLOv5-Windows_llm" / "yolov5"
 DEPTH_HISTORY_FRAMES = 5
 MIN_STATIONARY_BOX_IOU = 0.80
@@ -113,8 +117,7 @@ class ShortRangeRgbdCamera:
             left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
             right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
             stereo = pipeline.create(dai.node.StereoDepth)
-            stereo.setSubpixel(False)
-            stereo.setExtendedDisparity(True)
+            configure_short_range_stereo(stereo)
             sync = pipeline.create(dai.node.Sync)
             sync.setSyncThreshold(timedelta(milliseconds=34))
 
@@ -124,8 +127,8 @@ class ShortRangeRgbdCamera:
                 fps=15,
                 enableUndistortion=False,
             )
-            left_output = left.requestOutput(size=STEREO_SIZE, fps=15)
-            right_output = right.requestOutput(size=STEREO_SIZE, fps=15)
+            left_output = left.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
+            right_output = right.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
             left_output.link(stereo.left)
             right_output.link(stereo.right)
             rgb_output.link(sync.inputs["rgb"])

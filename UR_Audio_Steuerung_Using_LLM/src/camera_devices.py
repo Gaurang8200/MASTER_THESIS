@@ -13,10 +13,11 @@ CAMERA_DEVICE_ENV = "VISION_CAMERA_DEVICE"
 OAK_D_BACKEND = "oak_d"
 OAK_RGB_SENSOR_RESOLUTION = (1920, 1080)
 OAK_MONO_RESOLUTION = (1280, 720)
+OAK_STEREO_RESOLUTION = (640, 400)
 DEPTH_PATCH_RADIUS_PX = 1
 MIN_OBJECT_DEPTH_PIXELS = 3
 MIN_DEPTH_MM = 100.0
-TABLE_DEPTH_MIN_MM = 495.0
+MAX_DEPTH_MM = 10000.0
 OBJECT_DEPTH_CLUSTER_SPREAD_MM = 10.0
 MIN_VALID_DEPTH_FRAMES = 3
 MAX_TEMPORAL_DEVIATION_MM = 25.0
@@ -125,9 +126,10 @@ def object_depth_from_box(
                     continue
                 sampled_pixels.add((x, y))
                 value = float(depth_mm[y, x])
-                if not np.isfinite(value) or value < MIN_DEPTH_MM:
-                    continue
-                if value >= TABLE_DEPTH_MIN_MM:
+                if (
+                    not np.isfinite(value)
+                    or not MIN_DEPTH_MM <= value <= MAX_DEPTH_MM
+                ):
                     continue
                 object_depths.append(value)
 
@@ -204,6 +206,11 @@ def parse_camera_option(value: str) -> str:
 
 def apply_camera_environment(value: str) -> None:
     os.environ[CAMERA_DEVICE_ENV] = parse_camera_option(value)
+
+
+def configure_short_range_stereo(stereo: Any) -> None:
+    stereo.setSubpixel(False)
+    stereo.setExtendedDisparity(True)
 
 
 class RgbCameraStream:
@@ -294,6 +301,7 @@ class RgbCameraStream:
             left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
             right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
             stereo = pipeline.create(dai.node.StereoDepth)
+            configure_short_range_stereo(stereo)
             sync = pipeline.create(dai.node.Sync)
             sync.setSyncThreshold(timedelta(milliseconds=34))
 
@@ -303,12 +311,13 @@ class RgbCameraStream:
                 fps=15,
                 enableUndistortion=False,
             )
-            left_output = left.requestOutput(size=OAK_MONO_RESOLUTION, fps=15)
-            right_output = right.requestOutput(size=OAK_MONO_RESOLUTION, fps=15)
-            left_output.link(stereo.left)
-            right_output.link(stereo.right)
+            left_depth_output = left.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
+            right_depth_output = right.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
+            left_mono_output = left.requestOutput(size=OAK_MONO_RESOLUTION, fps=15)
+            left_depth_output.link(stereo.left)
+            right_depth_output.link(stereo.right)
             rgb_output.link(sync.inputs["rgb"])
-            left_output.link(sync.inputs["left_mono"])
+            left_mono_output.link(sync.inputs["left_mono"])
             if device.getPlatform() == dai.Platform.RVC4:
                 align = pipeline.create(dai.node.ImageAlign)
                 stereo.depth.link(align.input)

@@ -278,6 +278,7 @@ def run_session(
     frame_index = 0
     window_created = False
     last_pointing_at: float | None = None
+    last_depth_error: str | None = None
 
     try:
         gesture.start()
@@ -401,11 +402,21 @@ def run_session(
                     )
                     try:
                         depth_mm, sample_count = camera.measure_object_depth(sensor_box)
-                    except ValueError:
+                    except ValueError as error:
                         display_reason = "measuring object depth"
+                        if str(error) != last_depth_error:
+                            print(f"OAK D DEPTH REJECTED: {error}", flush=True)
+                            last_depth_error = str(error)
                     else:
+                        last_depth_error = None
                         depth_history.append(depth_mm)
                         stable_depth_mm = camera.stable_depth(list(depth_history))
+                        print(
+                            "OAK D DEPTH FRAME: "
+                            f"depth={depth_mm:.1f} mm, samples={sample_count}, "
+                            f"stable_frames={len(depth_history)}/3",
+                            flush=True,
+                        )
                         display_reason = (
                             f"measuring object depth {len(depth_history)}/3"
                             if stable_depth_mm is None

@@ -44,6 +44,7 @@ class GestureProcessClient:
         self._process: subprocess.Popen[str] | None = None
         self._session: GestureSession | None = None
         self._log_handle: IO[str] | None = None
+        self._log_offset = 0
 
     @property
     def active(self) -> bool:
@@ -77,6 +78,7 @@ class GestureProcessClient:
             log_file=self._runtime_dir / f"{session_id}.log",
         )
         self._log_handle = session.log_file.open("w", encoding="utf8")
+        self._log_offset = 0
         command = [
             sys.executable,
             str(self._service),
@@ -110,6 +112,7 @@ class GestureProcessClient:
         return session
 
     def latest_result(self) -> dict[str, object] | None:
+        self._print_log_updates()
         session = self._session
         if session is None or not session.result_file.is_file():
             return None
@@ -139,6 +142,7 @@ class GestureProcessClient:
                 process.kill()
                 process.wait(timeout=2.0)
 
+        self._print_log_updates()
         self._close_log()
         payload = self._read_result(session)
         self._process = None
@@ -212,6 +216,16 @@ class GestureProcessClient:
         if self._log_handle is not None:
             self._log_handle.close()
             self._log_handle = None
+
+    def _print_log_updates(self) -> None:
+        if self._session is None or not self._session.log_file.is_file():
+            return
+        with self._session.log_file.open("r", encoding="utf8") as log:
+            log.seek(self._log_offset)
+            output = log.read()
+            self._log_offset = log.tell()
+        if output:
+            print(output, end="", flush=True)
 
     def _wait_until_ready(
         self,
