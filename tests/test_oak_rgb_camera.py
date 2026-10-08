@@ -30,9 +30,11 @@ YOLO_ROOT = AUDIO_ROOT / "Code-YOLOv5-Windows_llm" / "yolov5"
 DEPTH_PATCH_RADIUS_PX = 1
 DEPTH_HISTORY_FRAMES = 5
 MIN_VALID_HISTORY_FRAMES = 3
-MIN_VALID_DEPTH_FRACTION = 0.25
+MIN_OBJECT_DEPTH_PIXELS = 3
 MIN_DEPTH_MM = 100.0
-MAX_DEPTH_MM = 10000.0
+TABLE_DEPTH_MIN_MM = 495.0
+TABLE_DEPTH_MAX_MM = 505.0
+OBJECT_DEPTH_CLUSTER_SPREAD_MM = 10.0
 MAX_TEMPORAL_DEVIATION_MM = 25.0
 MIN_STATIONARY_BOX_IOU = 0.80
 
@@ -108,36 +110,71 @@ def _box_iou(
     return intersection / (first_area + second_area - intersection)
 
 
-def median_depth_near_point(
+def object_depth_from_box(
     depth_mm: np.ndarray,
-    point: tuple[float, float],
+    box: tuple[int, int, int, int],
 ) -> float | None:
     if depth_mm.ndim != 2:
         raise ValueError("OAK D depth map must be a two dimensional array")
     height, width = depth_mm.shape
-    center_x = int(round(point[0]))
-    center_y = int(round(point[1]))
-    if not 0 <= center_x < width or not 0 <= center_y < height:
-        raise ValueError("OAK D object centre is outside the depth frame")
+    box_x1 = max(0, min(width, box[0]))
+    box_y1 = max(0, min(height, box[1]))
+    box_x2 = max(0, min(width, box[2]))
+    box_y2 = max(0, min(height, box[3]))
+    if box_x2 <= box_x1 or box_y2 <= box_y1:
+        raise ValueError("OAK D object box is outside the depth frame")
 
-    x1 = max(0, center_x - DEPTH_PATCH_RADIUS_PX)
-    x2 = min(width, center_x + DEPTH_PATCH_RADIUS_PX + 1)
-    y1 = max(0, center_y - DEPTH_PATCH_RADIUS_PX)
-    y2 = min(height, center_y + DEPTH_PATCH_RADIUS_PX + 1)
-    patch = depth_mm[y1:y2, x1:x2]
-    valid_mask = (
-        np.isfinite(patch)
-        & (patch >= MIN_DEPTH_MM)
-        & (patch <= MAX_DEPTH_MM)
+    box_width = box_x2 - box_x1
+    box_height = box_y2 - box_y1
+    center_x = box_x1 + box_width / 2.0
+    center_y = box_y1 + box_height / 2.0
+    sample_centers = (
+        (center_x, center_y),
+        (box_x1 + box_width * 0.25, center_y),
+        (box_x1 + box_width * 0.75, center_y),
+        (center_x, box_y1 + box_height * 0.25),
+        (center_x, box_y1 + box_height * 0.75),
     )
-    required_pixels = max(
-        1,
-        int(np.ceil(patch.size * MIN_VALID_DEPTH_FRACTION)),
-    )
-    valid_depths = patch[valid_mask]
-    if valid_depths.size < required_pixels:
+
+    sampled_pixels: set[tuple[int, int]] = set()
+    object_depths: list[float] = []
+    for sample_x, sample_y in sample_centers:
+        pixel_x = int(round(sample_x))
+        pixel_y = int(round(sample_y))
+        patch_x1 = max(box_x1, pixel_x - DEPTH_PATCH_RADIUS_PX)
+        patch_x2 = min(box_x2, pixel_x + DEPTH_PATCH_RADIUS_PX + 1)
+        patch_y1 = max(box_y1, pixel_y - DEPTH_PATCH_RADIUS_PX)
+        patch_y2 = min(box_y2, pixel_y + DEPTH_PATCH_RADIUS_PX + 1)
+        for y in range(patch_y1, patch_y2):
+            for x in range(patch_x1, patch_x2):
+                if (x, y) in sampled_pixels:
+                    continue
+                sampled_pixels.add((x, y))
+                value = float(depth_mm[y, x])
+                if not np.isfinite(value) or value < MIN_DEPTH_MM:
+                    continue
+                if TABLE_DEPTH_MIN_MM <= value <= TABLE_DEPTH_MAX_MM:
+                    continue
+                if value > TABLE_DEPTH_MAX_MM:
+                    continue
+                object_depths.append(value)
+
+    if len(object_depths) < MIN_OBJECT_DEPTH_PIXELS:
         return None
-    return float(np.median(valid_depths))
+    return _nearest_depth_cluster_median(object_depths)
+
+
+def _nearest_depth_cluster_median(depths_mm: list[float]) -> float | None:
+    ordered_depths = sorted(depths_mm)
+    for start, minimum_depth in enumerate(ordered_depths):
+        cluster = [
+            depth
+            for depth in ordered_depths[start:]
+            if depth - minimum_depth <= OBJECT_DEPTH_CLUSTER_SPREAD_MM
+        ]
+        if len(cluster) >= MIN_OBJECT_DEPTH_PIXELS:
+            return float(np.median(cluster))
+    return None
 
 
 class ShortRangeRgbdCamera:
@@ -275,9 +312,8 @@ def main() -> None:
             depth_stabilizer.retain(active_object_ids)
             for detected_object in detected_objects:
                 box = detected_object.box.as_int_tuple()
-                center = detected_object.box.center
                 try:
-                    spatial_depth_mm = median_depth_near_point(depth_mm, center)
+                    spatial_depth_mm = object_depth_from_box(depth_mm, box)
                     object_depth_mm = depth_stabilizer.update(
                         detected_object.object_id,
                         box,
