@@ -20,12 +20,6 @@
   "calibration_directory": "FR_oak_calibration",
   "calibration_image_size": [1280, 720],
   "mirror_x": false,
-  "depth": {
-    "table_ring_scale": 1.6,
-    "minimum_valid_pixels": 25,
-    "table_depth_tolerance_mm": 10.0,
-    "maximum_height_mm": 250.0
-  },
   "workspace_mm": {
     "x": [100.0, 750.0],
     "y": [-146.0, 650.0],

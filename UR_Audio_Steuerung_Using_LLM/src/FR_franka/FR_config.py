@@ -35,10 +35,6 @@ class FrankaConfig:
     workspace_x_mm: tuple[float, float]
     workspace_y_mm: tuple[float, float]
     workspace_z_mm: tuple[float, float]
-    depth_table_ring_scale: float
-    depth_minimum_valid_pixels: int
-    depth_table_tolerance_mm: float
-    depth_maximum_height_mm: float
     zones: dict[str, CartesianPose]
 
     def place_height_mm(self, object_class: int) -> float:
@@ -106,10 +102,6 @@ def load_franka_config(path: Path = DEFAULT_CONFIG_PATH) -> FrankaConfig:
         workspace_z_mm=_float_tuple(
             data["workspace_mm"]["z"], 2, "workspace_mm.z"
         ),
-        depth_table_ring_scale=float(data["depth"]["table_ring_scale"]),
-        depth_minimum_valid_pixels=int(data["depth"]["minimum_valid_pixels"]),
-        depth_table_tolerance_mm=float(data["depth"]["table_depth_tolerance_mm"]),
-        depth_maximum_height_mm=float(data["depth"]["maximum_height_mm"]),
         zones=zones,
     )
     _validate_config(config)
@@ -123,18 +115,10 @@ def _validate_config(config: FrankaConfig) -> None:
         raise ValueError("dynamics_factor must be between zero and one")
     if config.calibration_width <= 0 or config.calibration_height <= 0:
         raise ValueError("calibration image dimensions must be positive")
-    if config.depth_table_ring_scale <= 1.0:
-        raise ValueError("depth table ring scale must be greater than one")
-    if config.depth_minimum_valid_pixels <= 0:
-        raise ValueError("depth minimum valid pixels must be positive")
-    if config.depth_table_tolerance_mm <= 0.0:
-        raise ValueError("depth table tolerance must be positive")
     if config.gripper_speed_mm_s <= 0.0:
         raise ValueError("gripper speed must be positive")
     if config.grip_offset_below_surface_mm <= 0.0:
         raise ValueError("grip offset below surface must be positive")
-    if config.depth_maximum_height_mm <= 0.0:
-        raise ValueError("depth maximum height must be positive")
     for lower, upper in (
         config.workspace_x_mm,
         config.workspace_y_mm,
