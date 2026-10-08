@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 import time
+from collections import deque
 from pathlib import Path
 from typing import Sequence
 
@@ -20,10 +21,15 @@ for _folder in ("support", "detection", "logic"):
 
 from camera import CameraStream
 from config import GestureConfig, load_config, resolve_device
-from fingertip_selection import HoldTimer, bbox_center, find_touched_object, place_grid_key
+from fingertip_selection import (
+    HoldTimer,
+    bbox_center,
+    find_touched_object,
+    place_grid_key,
+)
 from gesture_classes import GestureName
 from gesture_detector import GestureDetector
-from object_detector import Yolov5ObjectDetector
+from object_detector import Yolov5ObjectDetector, box_iou
 from schemas import DetectedObject, GestureFrame, SelectionMode
 
 LOGGER = logging.getLogger(__name__)
@@ -85,6 +91,7 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
         "left_mono_frame_height": None,
         "fingertip_depth_mm": None,
         "object_depth_mm": None,
+        "object_depth_sample_count": None,
         "depth_path": None,
         "left_mono_mapping_error": None,
         "fingertip_confidence": None,
@@ -99,6 +106,7 @@ def _left_mono_payload(
     camera: CameraStream,
     sensor_point: tuple[float, float] | None,
     depth_field: str = "fingertip_depth_mm",
+    depth_mm: float | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "left_mono_pixel": None,
@@ -106,12 +114,16 @@ def _left_mono_payload(
         "left_mono_frame_height": None,
         "fingertip_depth_mm": None,
         "object_depth_mm": None,
+        "object_depth_sample_count": None,
         "left_mono_mapping_error": None,
     }
     if sensor_point is None:
         return payload
     try:
-        left_point, depth_mm, left_size = camera.project_sensor_point_to_left(sensor_point)
+        left_point, measured_depth_mm, left_size = camera.project_sensor_point_to_left(
+            sensor_point,
+            depth_mm,
+        )
     except (RuntimeError, ValueError) as error:
         payload["left_mono_mapping_error"] = str(error)
         return payload
@@ -120,10 +132,24 @@ def _left_mono_payload(
             "left_mono_pixel": [left_point[0], left_point[1]],
             "left_mono_frame_width": left_size[0],
             "left_mono_frame_height": left_size[1],
-            depth_field: depth_mm,
+            depth_field: measured_depth_mm,
         }
     )
     return payload
+
+
+def _tracked_object(
+    selected: DetectedObject,
+    objects: Sequence[DetectedObject],
+) -> DetectedObject | None:
+    for item in objects:
+        if item.object_id == selected.object_id:
+            return item
+    same_class = [item for item in objects if item.class_name == selected.class_name]
+    if not same_class:
+        return None
+    closest = max(same_class, key=lambda item: box_iou(selected.box, item.box))
+    return closest if box_iou(selected.box, closest.box) >= 0.25 else None
 
 
 REJECTION_INFORMATION_RANK = {
@@ -241,7 +267,11 @@ def run_session(
     result = _base_result(session_id, "rejected", "no_usable_frame")
     selected: DetectedObject | None = None
     selection_complete = False
-    confirmed_key: str | None = None
+    selected_fingertip: tuple[float, float] | None = None
+    selected_hold_seconds = 0.0
+    depth_history: deque[float] = deque(maxlen=5)
+    depth_anchor: DetectedObject | None = None
+    hand_clear_since: float | None = None
     display_reason = str(result["reason"])
     camera = CameraStream(config.camera)
     depth_file = result_file.with_name(f"{session_id}_depth.npy")
@@ -314,115 +344,156 @@ def run_session(
                 )
 
             inside_count = touch.inside_count if touch is not None else 0
-            candidate = touch.touched if touch is not None and inside_count == 1 else None
+            candidate = (
+                touch.touched
+                if touch is not None and inside_count == 1
+                else None
+            )
             candidate_key = candidate.object_id if candidate is not None else None
             if selection_kind == "location" and center is not None and pointing_present:
                 candidate_key = place_grid_key(center)
             hold = timer.update(candidate_key, observed_at)
-            sensor_object_box = (
-                camera.to_sensor_box(
-                    (
-                        candidate.box.x1,
-                        candidate.box.y1,
-                        candidate.box.x2,
-                        candidate.box.y2,
-                    ),
-                    frame.shape,
-                )
-                if candidate is not None
-                else None
-            )
-            mapping_point = sensor_center
-            depth_field = "fingertip_depth_mm"
-            if selection_kind == "object" and sensor_object_box is not None:
-                mapping_point = (
-                    (sensor_object_box[0] + sensor_object_box[2]) / 2.0,
-                    (sensor_object_box[1] + sensor_object_box[3]) / 2.0,
-                )
-                depth_field = "object_depth_mm"
-            mapping = _left_mono_payload(
-                camera,
-                mapping_point,
-                depth_field,
-            )
-            mapping_ready = mapping["left_mono_mapping_error"] is None
             hold_confirmed = (
                 candidate_key is not None and hold.confirmed_key == candidate_key
             )
-            if hold_confirmed and not selection_complete and mapping_ready:
+            if (
+                selection_kind == "object"
+                and hold_confirmed
+                and not selection_complete
+            ):
                 selected = candidate
                 selection_complete = True
-                confirmed_key = candidate_key
-                camera.save_latest_depth(depth_file)
-                result = {
-                    **_base_result(session_id, "selected", "selected"),
-                    "safe_to_use": True,
-                    "selection_kind": selection_kind,
-                    "selected_at_unix_s": time.time(),
-                    "last_seen_at_unix_s": time.time(),
-                    "frame_index": frame_index,
-                    "frame_width": int(frame.shape[1]),
-                    "frame_height": int(frame.shape[0]),
-                    "fingertip_pixel": [sensor_center[0], sensor_center[1]],
-                    **mapping,
-                    "depth_path": str(depth_file),
-                    "fingertip_confidence": fingertip.confidence,
-                    "pointing_finger_present": True,
-                    "objects_considered": touch.considered if touch is not None else 0,
-                    "selected_object": (
-                        _object_payload(candidate, camera, frame.shape)
-                        if candidate is not None
-                        else None
-                    ),
-                    "hold_seconds": hold.held_s,
-                    "latency_ms": round(
-                        (time.perf_counter() - frame_started) * 1000.0,
-                        3,
-                    ),
-                }
-                display_reason = "selected"
-                _write_json(result_file, result)
-            elif hold_confirmed and not selection_complete:
-                result = {
-                    **_base_result(session_id, "rejected", "depth_unavailable"),
-                    "frame_index": frame_index,
-                    "frame_width": int(frame.shape[1]),
-                    "frame_height": int(frame.shape[0]),
-                    "fingertip_pixel": [sensor_center[0], sensor_center[1]],
-                    **mapping,
-                    "fingertip_confidence": fingertip.confidence,
-                    "pointing_finger_present": True,
-                    "objects_considered": touch.considered if touch is not None else 0,
-                    "hold_seconds": hold.held_s,
-                    "latency_ms": round((time.perf_counter() - frame_started) * 1000.0, 3),
-                }
-                display_reason = "depth_unavailable"
-                _write_json(result_file, result)
+                selected_fingertip = sensor_center
+                selected_hold_seconds = hold.held_s
+                depth_history.clear()
+                depth_anchor = None
+                hand_clear_since = None
+                display_reason = "selected, remove hand for depth"
+            elif selection_kind == "object" and selection_complete and selected:
+                tracked = _tracked_object(selected, objects)
+                if tracked is None:
+                    hand_clear_since = None
+                    display_reason = "selected object not visible"
+                elif pointing_detected or fingertip is not None:
+                    selected = tracked
+                    hand_clear_since = None
+                    display_reason = "selected, remove hand for depth"
+                elif hand_clear_since is None:
+                    selected = tracked
+                    hand_clear_since = observed_at
+                    display_reason = "selected, keep hand clear"
+                elif observed_at - hand_clear_since < 0.5:
+                    selected = tracked
+                    display_reason = "selected, keep hand clear"
+                else:
+                    box_moved = (
+                        depth_anchor is not None
+                        and box_iou(depth_anchor.box, tracked.box) < 0.80
+                    )
+                    if depth_anchor is None or box_moved:
+                        depth_history.clear()
+                        depth_anchor = tracked
+                    selected = tracked
+                    sensor_box = camera.to_sensor_box(
+                        (
+                            tracked.box.x1,
+                            tracked.box.y1,
+                            tracked.box.x2,
+                            tracked.box.y2,
+                        ),
+                        frame.shape,
+                    )
+                    try:
+                        depth_mm, sample_count = camera.measure_object_depth(sensor_box)
+                    except ValueError:
+                        display_reason = "measuring object depth"
+                    else:
+                        depth_history.append(depth_mm)
+                        stable_depth_mm = camera.stable_depth(list(depth_history))
+                        display_reason = (
+                            f"measuring object depth {len(depth_history)}/3"
+                            if stable_depth_mm is None
+                            else "object depth ready"
+                        )
+                        if stable_depth_mm is not None:
+                            object_center = (
+                                (sensor_box[0] + sensor_box[2]) / 2.0,
+                                (sensor_box[1] + sensor_box[3]) / 2.0,
+                            )
+                            mapping = _left_mono_payload(
+                                camera,
+                                object_center,
+                                "object_depth_mm",
+                                stable_depth_mm,
+                            )
+                            if mapping["left_mono_mapping_error"] is None:
+                                mapping["object_depth_sample_count"] = sample_count
+                                camera.save_latest_depth(depth_file)
+                                result = {
+                                    **_base_result(session_id, "selected", "selected"),
+                                    "safe_to_use": True,
+                                    "selection_kind": selection_kind,
+                                    "selected_at_unix_s": time.time(),
+                                    "last_seen_at_unix_s": time.time(),
+                                    "frame_index": frame_index,
+                                    "frame_width": int(frame.shape[1]),
+                                    "frame_height": int(frame.shape[0]),
+                                    "fingertip_pixel": (
+                                        list(selected_fingertip)
+                                        if selected_fingertip is not None
+                                        else None
+                                    ),
+                                    **mapping,
+                                    "depth_path": str(depth_file),
+                                    "fingertip_confidence": None,
+                                    "pointing_finger_present": False,
+                                    "objects_considered": len(objects),
+                                    "selected_object": _object_payload(
+                                        tracked,
+                                        camera,
+                                        frame.shape,
+                                    ),
+                                    "hold_seconds": selected_hold_seconds,
+                                    "latency_ms": round(
+                                        (time.perf_counter() - frame_started) * 1000.0,
+                                        3,
+                                    ),
+                                }
+                                display_reason = "selected"
+                                _write_json(result_file, result)
             elif (
-                selection_complete
-                and candidate_key is not None
-                and candidate_key == confirmed_key
-                and mapping_ready
+                selection_kind == "location"
+                and hold_confirmed
+                and not selection_complete
             ):
-                camera.save_latest_depth(depth_file)
-                result["hold_seconds"] = hold.held_s
-                result["fingertip_pixel"] = (
-                    [sensor_center[0], sensor_center[1]]
-                    if sensor_center is not None
-                    else None
-                )
-                result.update(mapping)
-                result["depth_path"] = str(depth_file)
-                result["selected_object"] = _object_payload(
-                    candidate, camera, frame.shape
-                )
-                result["last_seen_at_unix_s"] = time.time()
-                result["frame_index"] = frame_index
-                result["latency_ms"] = round(
-                    (time.perf_counter() - frame_started) * 1000.0,
-                    3,
-                )
-                _write_json(result_file, result)
+                mapping = _left_mono_payload(camera, sensor_center)
+                if mapping["left_mono_mapping_error"] is None:
+                    selected = candidate
+                    selection_complete = True
+                    result = {
+                        **_base_result(session_id, "selected", "selected"),
+                        "safe_to_use": True,
+                        "selection_kind": selection_kind,
+                        "selected_at_unix_s": time.time(),
+                        "last_seen_at_unix_s": time.time(),
+                        "frame_index": frame_index,
+                        "frame_width": int(frame.shape[1]),
+                        "frame_height": int(frame.shape[0]),
+                        "fingertip_pixel": [sensor_center[0], sensor_center[1]],
+                        **mapping,
+                        "depth_path": None,
+                        "fingertip_confidence": fingertip.confidence,
+                        "pointing_finger_present": True,
+                        "objects_considered": 0,
+                        "selected_object": None,
+                        "hold_seconds": hold.held_s,
+                        "latency_ms": round(
+                            (time.perf_counter() - frame_started) * 1000.0,
+                            3,
+                        ),
+                    }
+                    display_reason = "selected"
+                    _write_json(result_file, result)
             elif not selection_complete:
                 if selection_kind == "location":
                     reason = (

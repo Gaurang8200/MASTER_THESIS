@@ -16,7 +16,6 @@ from .FR_config import FrankaConfig, load_franka_config
 from .FR_depth_transformer import (
     CalibratedDepth,
     FrankaDepthTransformer,
-    measure_object_depth,
 )
 from .FR_geometry import rotation_vector_to_quaternion
 from .FR_models import CartesianPose, PixelPoint, RobotPoint
@@ -216,21 +215,18 @@ class FrankaAudioWorkflow:
             calibration_size,
         )
         self._context.selected_class = self._read_selected_class(data)
-        depth_path_value = data.get("depth_path")
-        if depth_path_value:
-            object_depth_mm, sample_count = measure_object_depth(
-                Path(str(depth_path_value)),
-                data["original_bbox"],
-            )
+        object_depth_value = data.get("object_depth_mm")
+        sample_count_value = data.get("object_depth_sample_count")
+        if object_depth_value is not None and sample_count_value is not None:
             self._context.depth_measurement = self._depth_transformer.transform(
                 calibration_pixel,
                 calibration_size,
-                object_depth_mm,
+                float(object_depth_value),
                 self._arm.base_to_end_effector(),
-                sample_count,
+                int(sample_count_value),
             )
         elif not self._simulation:
-            raise FileNotFoundError("Selected object has no synchronized OAK D depth capture")
+            raise ValueError("Selected object has no stable OAK D depth measurement")
         robot_z = (
             self._context.depth_measurement.robot_base_z_mm
             if self._context.depth_measurement is not None

@@ -20,7 +20,13 @@ AUDIO_PROJECT_ROOT = REPOSITORY_ROOT / "UR_Audio_Steuerung_Using_LLM"
 if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
-from src.camera_devices import OakDFrame, RgbCameraStream, depth_at_pixel
+from src.camera_devices import (
+    OakDFrame,
+    RgbCameraStream,
+    depth_at_pixel,
+    object_depth_from_box,
+    stable_depth_from_history,
+)
 
 from config import CameraConfig
 
@@ -76,13 +82,33 @@ class CameraStream:
     def project_sensor_point_to_left(
         self,
         point: tuple[float, float],
+        depth_mm: float | None = None,
     ) -> tuple[tuple[float, float], float, tuple[int, int]]:
         if self._latest_frame is None:
             raise RuntimeError("OAK D frame geometry is not available")
-        depth_mm = depth_at_pixel(self._latest_frame.depth_mm, point)
-        left_point = self._latest_frame.project_rgb_point_to_left(point, depth_mm)
+        measured_depth_mm = (
+            depth_at_pixel(self._latest_frame.depth_mm, point)
+            if depth_mm is None
+            else float(depth_mm)
+        )
+        left_point = self._latest_frame.project_rgb_point_to_left(
+            point,
+            measured_depth_mm,
+        )
         left_height, left_width = self._latest_frame.left_mono.shape[:2]
-        return left_point, depth_mm, (left_width, left_height)
+        return left_point, measured_depth_mm, (left_width, left_height)
+
+    def measure_object_depth(
+        self,
+        box: tuple[float, float, float, float],
+    ) -> tuple[float, int]:
+        if self._latest_frame is None:
+            raise RuntimeError("OAK D depth frame is not available")
+        return object_depth_from_box(self._latest_frame.depth_mm, box)
+
+    @staticmethod
+    def stable_depth(depths_mm: list[float]) -> float | None:
+        return stable_depth_from_history(depths_mm)
 
     def to_sensor_point(
         self,
