@@ -26,6 +26,7 @@ from fingertip_selection import (
     bbox_center,
     find_touched_object,
     place_grid_key,
+    point_in_box,
 )
 from gesture_classes import GestureName
 from gesture_detector import GestureDetector
@@ -270,7 +271,6 @@ def run_session(
     selected_fingertip: tuple[float, float] | None = None
     selected_hold_seconds = 0.0
     depth_history: deque[float] = deque(maxlen=5)
-    depth_anchor: DetectedObject | None = None
     hand_clear_since: float | None = None
     display_reason = str(result["reason"])
     camera = CameraStream(config.camera)
@@ -366,7 +366,6 @@ def run_session(
                 selected_fingertip = sensor_center
                 selected_hold_seconds = hold.held_s
                 depth_history.clear()
-                depth_anchor = None
                 hand_clear_since = None
                 display_reason = "selected, remove hand for depth"
             elif selection_kind == "object" and selection_complete and selected:
@@ -374,7 +373,11 @@ def run_session(
                 if tracked is None:
                     hand_clear_since = None
                     display_reason = "selected object not visible"
-                elif pointing_detected or fingertip is not None:
+                elif (
+                    pointing_detected
+                    and center is not None
+                    and point_in_box(center, tracked.box)
+                ):
                     selected = tracked
                     hand_clear_since = None
                     display_reason = "selected, remove hand for depth"
@@ -386,13 +389,6 @@ def run_session(
                     selected = tracked
                     display_reason = "selected, keep hand clear"
                 else:
-                    box_moved = (
-                        depth_anchor is not None
-                        and box_iou(depth_anchor.box, tracked.box) < 0.80
-                    )
-                    if depth_anchor is None or box_moved:
-                        depth_history.clear()
-                        depth_anchor = tracked
                     selected = tracked
                     sensor_box = camera.to_sensor_box(
                         (
