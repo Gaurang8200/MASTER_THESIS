@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections import deque
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -19,13 +20,84 @@ for folder in (AUDIO_ROOT, PIPELINE_ROOT / "support", PIPELINE_ROOT / "detection
 
 from config import ObjectModelConfig, resolve_device
 from object_detector import Yolov5ObjectDetector
-from src.camera_devices import depth_at_pixel
 
 
 FRAME_SIZE = (1280, 720)
 RGB_SENSOR_SIZE = (1920, 1080)
 STEREO_SIZE = (640, 400)
 YOLO_ROOT = AUDIO_ROOT / "Code-YOLOv5-Windows_llm" / "yolov5"
+DEPTH_PATCH_RADIUS_PX = 3
+DEPTH_HISTORY_FRAMES = 5
+MIN_VALID_HISTORY_FRAMES = 3
+MIN_VALID_DEPTH_FRACTION = 0.25
+MIN_DEPTH_MM = 100.0
+MAX_DEPTH_MM = 10000.0
+MAX_TEMPORAL_DEVIATION_MM = 25.0
+
+
+class ObjectDepthStabilizer:
+    def __init__(self) -> None:
+        self._history: dict[str, deque[float | None]] = {}
+
+    def update(self, object_id: str, depth_mm: float | None) -> float:
+        history = self._history.setdefault(
+            object_id,
+            deque(maxlen=DEPTH_HISTORY_FRAMES),
+        )
+        history.append(depth_mm)
+        valid_depths = np.asarray(
+            [value for value in history if value is not None],
+            dtype=np.float32,
+        )
+        if valid_depths.size < MIN_VALID_HISTORY_FRAMES:
+            raise ValueError("not enough recent valid depth frames")
+
+        stable_depth_mm = float(np.median(valid_depths))
+        median_deviation_mm = float(
+            np.median(np.abs(valid_depths - stable_depth_mm))
+        )
+        if median_deviation_mm > MAX_TEMPORAL_DEVIATION_MM:
+            raise ValueError("recent depth frames are inconsistent")
+        return stable_depth_mm
+
+    def retain(self, active_object_ids: set[str]) -> None:
+        self._history = {
+            object_id: history
+            for object_id, history in self._history.items()
+            if object_id in active_object_ids
+        }
+
+
+def median_depth_near_point(
+    depth_mm: np.ndarray,
+    point: tuple[float, float],
+) -> float | None:
+    if depth_mm.ndim != 2:
+        raise ValueError("OAK D depth map must be a two dimensional array")
+    height, width = depth_mm.shape
+    center_x = int(round(point[0]))
+    center_y = int(round(point[1]))
+    if not 0 <= center_x < width or not 0 <= center_y < height:
+        raise ValueError("OAK D object centre is outside the depth frame")
+
+    x1 = max(0, center_x - DEPTH_PATCH_RADIUS_PX)
+    x2 = min(width, center_x + DEPTH_PATCH_RADIUS_PX + 1)
+    y1 = max(0, center_y - DEPTH_PATCH_RADIUS_PX)
+    y2 = min(height, center_y + DEPTH_PATCH_RADIUS_PX + 1)
+    patch = depth_mm[y1:y2, x1:x2]
+    valid_mask = (
+        np.isfinite(patch)
+        & (patch >= MIN_DEPTH_MM)
+        & (patch <= MAX_DEPTH_MM)
+    )
+    required_pixels = max(
+        1,
+        int(np.ceil(patch.size * MIN_VALID_DEPTH_FRACTION)),
+    )
+    valid_depths = patch[valid_mask]
+    if valid_depths.size < required_pixels:
+        return None
+    return float(np.median(valid_depths))
 
 
 class ShortRangeRgbdCamera:
@@ -131,6 +203,7 @@ def main() -> None:
         confidence=0.25,
     )
     camera = ShortRangeRgbdCamera()
+    depth_stabilizer = ObjectDepthStabilizer()
 
     try:
         detector.start()
@@ -155,11 +228,20 @@ def main() -> None:
                 size_printed = True
 
             display = frame.copy()
-            for detected_object in detector.get_objects(frame):
+            detected_objects = detector.get_objects(frame)
+            active_object_ids = {
+                detected_object.object_id for detected_object in detected_objects
+            }
+            depth_stabilizer.retain(active_object_ids)
+            for detected_object in detected_objects:
                 box = detected_object.box.as_int_tuple()
                 center = detected_object.box.center
                 try:
-                    object_depth_mm = depth_at_pixel(depth_mm, center)
+                    spatial_depth_mm = median_depth_near_point(depth_mm, center)
+                    object_depth_mm = depth_stabilizer.update(
+                        detected_object.object_id,
+                        spatial_depth_mm,
+                    )
                     depth_text = f"{object_depth_mm:.0f} mm"
                 except ValueError:
                     depth_text = "depth unavailable"
