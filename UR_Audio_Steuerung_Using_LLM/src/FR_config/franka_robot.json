@@ -10,7 +10,7 @@
   "camera_offset_mm": [0.0, 0.0, 0.0],
   "lift_height_mm": 200.0,
   "table_surface_z_mm": 0.0,
-  "grip_offset_below_surface_mm": 10.0,
+  "grip_offset_below_surface_mm": 25.0,
   "place_heights_mm": {
     "0": 67.0,
     "1": 48.0,
