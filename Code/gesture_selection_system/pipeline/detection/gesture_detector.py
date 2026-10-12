@@ -133,7 +133,9 @@ class GestureDetector:
                 imgsz=self._config.imgsz,
                 conf=self._confidence.detector_floor,
                 device=self._device,
-                half=self._config.half and self._device != "cpu",
+                quantize=(
+                    16 if self._config.half and self._device != "cpu" else None
+                ),
                 max_det=self._config.max_detections,
                 verbose=False,
             )
