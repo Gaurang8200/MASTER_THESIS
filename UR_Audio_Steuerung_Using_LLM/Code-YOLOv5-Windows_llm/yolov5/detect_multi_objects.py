@@ -15,22 +15,16 @@ import platform
 import sys
 import json
 import pathlib
+import threading
 from pathlib import Path
 from collections import defaultdict
 
 import torch
 
-if os.name != "nt":
-    # models/experimental.py unconditionally aliases PosixPath to
-    # WindowsPath, assuming a Windows host. Pre empt that here so the
-    # alias becomes a no op on macOS/Linux instead of an unusable class.
-    pathlib.WindowsPath = pathlib.PosixPath
-
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
-ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
@@ -153,6 +147,58 @@ class MultiObjectTracker:
 
 # Global object tracker
 object_tracker = MultiObjectTracker()
+_model_cache = {}
+_warmed_shapes = set()
+_model_lock = threading.Lock()
+
+
+def warmup_model(
+    weights=ROOT / "yolov5s.pt",
+    data=ROOT / "data/coco128.yaml",
+    imgsz=(640, 640),
+    device="",
+    dnn=False,
+    half=False,
+):
+    model, model_key = _cached_model(weights, device, dnn, data, half)
+    checked_size = check_img_size(imgsz, s=model.stride)
+    _warm_model(model, model_key, (1, 3, *checked_size))
+
+
+def _cached_model(weights, device, dnn, data, half):
+    selected_device = select_device(device)
+    weight_key = tuple(str(value) for value in weights) if isinstance(weights, list) else str(weights)
+    model_key = (weight_key, str(selected_device), str(data), bool(dnn), bool(half))
+    with _model_lock:
+        model = _model_cache.get(model_key)
+        if model is None:
+            original_windows_path = pathlib.WindowsPath
+            if os.name != "nt":
+                pathlib.WindowsPath = pathlib.PosixPath
+            try:
+                model = DetectMultiBackend(
+                    weights,
+                    device=selected_device,
+                    dnn=dnn,
+                    data=data,
+                    fp16=half,
+                )
+            finally:
+                pathlib.WindowsPath = original_windows_path
+            _model_cache[model_key] = model
+            LOGGER.info("YOLO runtime loaded model once: %s", weights)
+        else:
+            LOGGER.info("YOLO runtime reused loaded model: %s", weights)
+    return model, model_key
+
+
+def _warm_model(model, model_key, shape):
+    warmup_key = (model_key, shape)
+    with _model_lock:
+        if warmup_key in _warmed_shapes:
+            return
+        model.warmup(imgsz=shape)
+        _warmed_shapes.add(warmup_key)
 
 @smart_inference_mode()
 def run(
@@ -201,9 +247,9 @@ def run(
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
     (save_dir / "labels" if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
-    # Load model
-    device = select_device(device)
-    model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
+    # Load model once and reuse it for overview, verification and precision detection.
+    model, model_key = _cached_model(weights, device, dnn, data, half)
+    device = model.device
     stride, names, pt = model.stride, model.names, model.pt
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
@@ -220,7 +266,8 @@ def run(
     vid_path, vid_writer = [None] * bs, [None] * bs
 
     # Run inference
-    model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
+    warmup_shape = (1 if pt or model.triton else bs, 3, *imgsz)
+    _warm_model(model, model_key, warmup_shape)
     seen, windows, dt = 0, [], (Profile(device=device), Profile(device=device), Profile(device=device))
     
     for path, im, im0s, vid_cap, s in dataset:

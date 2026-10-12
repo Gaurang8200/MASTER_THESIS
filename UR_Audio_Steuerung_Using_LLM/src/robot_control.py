@@ -8,6 +8,7 @@ import socket
 import struct
 import json
 import shutil
+import runpy
 
 from src.robot_output import emit_method_execution
 
@@ -1195,20 +1196,16 @@ def precision_detection(robot_ip):
         print("[DEBUG] precision_detection → forced DETECTION_MODE=real for new camera capture")
     
     try:
-        # Führe detection_multi_precision_run.py aus
-        detection_script = os.path.join(PREDECESSOR_DIR, 'detection_multi_precision_run.py')
-        result = subprocess.run(
-            [PRE_PYTHON, detection_script],
-            cwd=PREDECESSOR_DIR,
-            capture_output=True,
-            text=True,
+        from detection_multi_precision_run import capture_and_detect_all
+
+        started = time.perf_counter()
+        detected_objects = capture_and_detect_all(mode="real")
+        if not detected_objects:
+            raise RuntimeError("Precision detection found no objects")
+        print(
+            "PERFORMANCE: Complete precision detection "
+            f"{(time.perf_counter() - started) * 1000.0:.1f} ms"
         )
-        if result.returncode != 0:
-            details = result.stderr.strip() or result.stdout.strip()
-            raise RuntimeError(
-                "Precision detection failed with return code "
-                f"{result.returncode}. {details}"
-            )
     finally:
         # Stelle ursprüngliche Environment Variable wieder her
         if original_env_mode is None:
@@ -1257,22 +1254,23 @@ def _run_precision_stage(script_name: str, output_path: str, stage_name: str) ->
     if os.path.exists(output_path):
         os.remove(output_path)
     script_path = os.path.join(PREDECESSOR_DIR, script_name)
-    result = subprocess.run(
-        [PRE_PYTHON, script_path],
-        cwd=PREDECESSOR_DIR,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        details = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(
-            f"Precision {stage_name} failed with return code "
-            f"{result.returncode}. {details[-4000:]}"
-        )
+    previous_directory = os.getcwd()
+    started = time.perf_counter()
+    try:
+        os.chdir(PREDECESSOR_DIR)
+        runpy.run_path(script_path, run_name=f"__precision_{stage_name.lower()}__")
+    except Exception as error:
+        raise RuntimeError(f"Precision {stage_name} failed. {error}") from error
+    finally:
+        os.chdir(previous_directory)
     if not os.path.isfile(output_path) or os.path.getsize(output_path) == 0:
         raise RuntimeError(
             f"Precision {stage_name} did not create required output {output_path}"
         )
+    print(
+        f"PERFORMANCE: Precision {stage_name} "
+        f"{(time.perf_counter() - started) * 1000.0:.1f} ms"
+    )
 
 # Standard-Roboter-IP
 robot_ip = '192.168.2.180'

@@ -13,6 +13,7 @@ if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
 from src.camera_devices import RgbCameraStream, map_detections_to_left_mono
+from src.yolo_detection_runtime import run_yolo_detection
 
 # === Configuration Constants ===
 SAVE_DIRECTORY = 'photos'
@@ -43,34 +44,7 @@ os.makedirs(TXT_FILE_DIR, exist_ok=True)
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 os.makedirs(TEST_PHOTOS_DIR, exist_ok=True)
 
-# === Python executable configuration ===
-def get_python_executable():
-    """Get the correct Python executable for YOLOv5"""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Try different Python executables in order of preference
-    python_candidates = [
-        sys.executable,  # Current Python interpreter
-        'python',
-        'python3',
-        os.path.join(current_dir, 'venv', 'Scripts', 'python.exe'),  # Windows venv
-        os.path.join(current_dir, 'venv', 'bin', 'python'),  # Linux/Mac venv
-    ]
-    
-    for python_exe in python_candidates:
-        try:
-            result = subprocess.run([python_exe, '--version'], 
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                print(f"INFO: Using Python executable: {python_exe}")
-                return python_exe
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            continue
-    
-    print("WARNING: No suitable Python executable found, using 'python'")
-    return 'python'
-
-PYTHON_EXE = get_python_executable()
+PYTHON_EXE = sys.executable
 
 class MultiObjectDetector:
     """
@@ -185,37 +159,21 @@ class MultiObjectDetector:
             runs_dir = os.path.join(yolov5_dir, "runs", "detect")
             os.makedirs(runs_dir, exist_ok=True)
             
-            # Build command with absolute paths
-            cmd = [
-                PYTHON_EXE, 
-                'detect_multi_objects.py',
-                '--weights', model_path,
-                '--source', abs_image_path,
-                '--conf-thres', str(confidence_threshold),
-                '--save-txt',
-                '--save-crop',
-                '--project', 'runs/detect',
-                '--name', 'multi_exp'
-                # NOTE: Removed --exist-ok to enable automatic run incrementing (multi_exp1, multi_exp2, etc.)
-            ]
-            
-            print(f"DEBUG: Running command: {' '.join(cmd)}")
             print("DETECTION: Running YOLOv5 multi-object detection...")
-            
-            # Run detection with timeout
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
-                                  encoding='utf-8', errors='ignore')
-            
-            print(f"DEBUG: Detection return code: {result.returncode}")
-            print(f"DEBUG: Detection stdout: {result.stdout}")
-            if result.stderr:
-                print(f"DEBUG: Detection stderr: {result.stderr}")
-            
-            if result.returncode != 0:
-                print(f"ERROR: YOLOv5 detection failed with return code {result.returncode}")
-                print(f"STDERR: {result.stderr}")
-                print(f"STDOUT: {result.stdout}")
-                return []
+            detection_started = time.perf_counter()
+            run_yolo_detection(
+                weights=model_path,
+                source=abs_image_path,
+                conf_thres=confidence_threshold,
+                save_txt=True,
+                save_crop=True,
+                project=runs_dir,
+                name="multi_exp",
+            )
+            print(
+                "PERFORMANCE: YOLO detection "
+                f"{(time.perf_counter() - detection_started) * 1000.0:.1f} ms"
+            )
             
             print("SUCCESS: YOLOv5 detection completed")
             
@@ -295,9 +253,6 @@ class MultiObjectDetector:
                 
                 return []
             
-        except subprocess.TimeoutExpired:
-            print("ERROR: Detection timeout - process took too long (>120s)")
-            return []
         except Exception as e:
             print(f"ERROR: Detection failed: {e}")
             import traceback

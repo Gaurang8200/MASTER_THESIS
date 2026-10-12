@@ -57,6 +57,7 @@ from src.speech.information_extraction_openai_api_multi import InformationExtrac
 from src.speech.microphone_devices import discover_input_microphones
 from src.camera_devices import apply_camera_environment, discover_oak_cameras
 from src.detection_preparation import get_default_robot_ip, prepare_robot_for_detection
+from src.yolo_detection_runtime import warm_yolo_detection
 from src.robot_method_selector_multi import select_robot_methods_multi, select_target_object
 from src.zone_coordinates import get_zone_coordinates
 from src.multimodal import (
@@ -68,53 +69,6 @@ from src.multimodal import (
    is_negative,
    resolve_multimodal_selection,
 )
-
-# Python executable for YOLOv5 scripts
-def get_yolo_python():
-   """Get correct Python executable for YOLOv5 detection"""
-   candidates = [
-       sys.executable,
-       'python',
-       'python3',
-       os.path.join(ROOT, "venv_wrapper", "Scripts", "python.exe"),
-       os.path.join(PRE, "venv", "Scripts", "python.exe"),
-       os.path.join(PRE, "venv", "bin", "python"),
-   ]
-   
-   for candidate in candidates:
-       try:
-           result = subprocess.run([candidate, '--version'],
-                                 capture_output=True, text=True, timeout=5)
-           if result.returncode == 0:
-               print(f"INFO: Using Python executable: {candidate}")
-               return candidate
-       except (subprocess.TimeoutExpired, FileNotFoundError):
-           continue
-   print("WARNING: Falling back to system Python")
-   return 'python'
-
-def get_pre_venv_python(platform_choice="windows"):
-   """Path to the Code-YOLOv5-Windows_llm venv interpreter for the chosen platform.
-
-   Detection needs the pinned cv2/torch versions in that subproject's own
-   venv. platform_choice comes from the Path Select control so the user
-   picks Windows, macOS or Linux explicitly instead of relying on
-   auto-detection. Windows keeps its original hardcoded path unchanged.
-   Falls back to get_yolo_python() when that venv layout is not present,
-   which is always true for macOS/Linux right now since the venv there
-   was created on Windows.
-   """
-   platform_python_paths = {
-       "windows": os.path.join(PRE, "venv", "Scripts", "python.exe"),
-       "mac": os.path.join(PRE, "venv", "bin", "python"),
-       "linux": os.path.join(PRE, "venv", "bin", "python"),
-   }
-   candidate = platform_python_paths.get(platform_choice)
-   if candidate and os.path.exists(candidate):
-       return candidate
-   return get_yolo_python()
-
-YOLO_PYTHON = get_yolo_python()
 
 load_dotenv()
 
@@ -262,6 +216,33 @@ def publish_multimodal_rejection(reason):
    )
    feedback.rejection(reason)
 
+
+def _run_detection(mode: str):
+   from detection_multi import capture_and_detect_all
+
+   started = time.perf_counter()
+   result = capture_and_detect_all(mode=mode)
+   print(
+       f"PERFORMANCE: Complete {mode} detection "
+       f"{(time.perf_counter() - started) * 1000.0:.1f} ms"
+   )
+   return result
+
+
+def _warm_detection_model() -> None:
+   weights = Path(PRE) / "yolov5" / "my_model.pt"
+   if not weights.is_file():
+       return
+   started = time.perf_counter()
+   try:
+       warm_yolo_detection(weights)
+       print(
+           "PERFORMANCE: YOLO background warmup "
+           f"{(time.perf_counter() - started) * 1000.0:.1f} ms"
+       )
+   except Exception as error:
+       print(f"WARNING: YOLO background warmup failed: {error}")
+
 def capture_and_detect_objects(preserve_command: bool = False) -> None:
    """Enhanced capture with simulation mode support"""
    global detected_objects, selected_object, ie_instance
@@ -304,16 +285,7 @@ def capture_and_detect_objects(preserve_command: bool = False) -> None:
            photo_path = os.path.join(photos_dir, "photo_1.jpg")
            shutil.copy2(test_image_path, photo_path)
            output_text.insert(tk.END, f"SIMULATION: Copied to: {photo_path}\n")
-           detection_script = os.path.join(PRE, "detection_multi.py")
-           # Use the PRE venv Python for correct cv2 environment
-           PRE_PYTHON = get_pre_venv_python(platform_select.get())
-           output_text.insert(tk.END, f"SIMULATION: Running detection with Python: {PRE_PYTHON}\n")
-           output_text.insert(tk.END, f"SIMULATION: Detection script: {detection_script}\n")
-           result = subprocess.run(
-               [PRE_PYTHON, detection_script],
-               cwd=PRE, capture_output=True, text=True, timeout=180,
-               encoding='utf-8', errors='ignore'
-           )
+           detection_result = _run_detection("simulation")
        else:
            # Set environment variable for real mode
            os.environ['DETECTION_MODE'] = 'real'
@@ -338,26 +310,10 @@ def capture_and_detect_objects(preserve_command: bool = False) -> None:
                output_text.insert(tk.END, f"REAL: Cleared photos directory ({photos_dir})\n")
 
            output_text.insert(tk.END, "CAMERA: Using real camera for detection\n")
-           detection_script = os.path.join(PRE, "detection_multi.py")
-           # Use the PRE venv Python for correct cv2 environment
-           PRE_PYTHON = get_pre_venv_python(platform_select.get())
-           output_text.insert(tk.END, f"REAL: Running detection with Python: {PRE_PYTHON}\n")
-           output_text.insert(tk.END, f"REAL: Detection script: {detection_script}\n")
-           result = subprocess.run(
-               [PRE_PYTHON, detection_script],
-               cwd=PRE, capture_output=True, text=True,
-               encoding='utf-8', errors='ignore'
-           )
+           detection_result = _run_detection("real")
 
-       # Debug output from detection script
-       if result.stdout:
-           output_text.insert(tk.END, f"DETECTION OUTPUT:\n{result.stdout}\n")
-       if result.stderr:
-           output_text.insert(tk.END, f"DETECTION STDERR:\n{result.stderr}\n")
-
-       # Ergebnis prüfen
-       if result.returncode != 0:
-           output_text.insert(tk.END, f"ERROR: Detection failed with return code {result.returncode}\n")
+       if detection_result is None:
+           output_text.insert(tk.END, "ERROR: Detection failed\n")
            update_workflow_status(WorkflowStatus.READY_FOR_DETECTION)
            return
 
@@ -1670,6 +1626,10 @@ update_button_states()
 
 # Load command history after GUI is set up
 app.after(100, load_command_history)
+app.after(
+   100,
+   lambda: threading.Thread(target=_warm_detection_model, daemon=True).start(),
+)
 
 # Add usage instructions to object display initially
 if not detected_objects:

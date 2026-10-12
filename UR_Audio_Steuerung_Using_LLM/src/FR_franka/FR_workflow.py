@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
@@ -71,12 +72,17 @@ class FrankaAudioWorkflow:
         self.start()
         for method_name in method_list:
             emit_method_execution(method_name, self._output)
+            started = time.perf_counter()
             try:
                 self._execute_method(method_name)
             except Exception as error:
                 raise RuntimeError(
                     f"Franka method {method_name} failed: {error}"
                 ) from error
+            self._output(
+                f"PERFORMANCE: {method_name} "
+                f"{(time.perf_counter() - started) * 1000.0:.1f} ms"
+            )
 
     def start(self) -> None:
         if self._started:
