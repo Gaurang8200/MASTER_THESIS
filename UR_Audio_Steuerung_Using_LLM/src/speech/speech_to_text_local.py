@@ -2,7 +2,10 @@
 import os
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
+from typing import Any
 
 import whisper
 
@@ -10,9 +13,30 @@ from .base import SpeechToText
 import speech_recognition as sr
 
 class SpeechToTextLocal(SpeechToText):
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize with ffmpeg path configuration"""
         self.setup_ffmpeg_path()
+        self._models_dir = "./models/whisper"
+        self._model: Any | None = None
+        self._model_lock = threading.Lock()
+        self._transcription_lock = threading.Lock()
+
+    def warmup(self) -> None:
+        """Load Whisper once so the first command does not pay startup cost."""
+        self._get_model()
+
+    def _get_model(self) -> Any:
+        if self._model is not None:
+            return self._model
+        with self._model_lock:
+            if self._model is None:
+                os.makedirs(self._models_dir, exist_ok=True)
+                print("INFO: Loading Whisper model...")
+                self._model = whisper.load_model(
+                    "base",
+                    download_root=self._models_dir,
+                )
+        return self._model
         
     def setup_ffmpeg_path(self) -> str:
         """Setup ffmpeg path for Whisper to work properly"""
@@ -62,29 +86,25 @@ class SpeechToTextLocal(SpeechToText):
         Das Modell wird im Verzeichnis ./models/whisper gespeichert.
         """
         try:
-            # Ensure ffmpeg is available
-            self.setup_ffmpeg_path()
-            
             # Überprüfe ob Audio-Datei existiert
             if not os.path.exists(file_path):
                 print(f"ERROR: Audio file not found: {file_path}")
                 return ""
-            
+
             print(f"INFO: Transcribing audio file: {file_path}")
-            
-            # Erstelle Models-Verzeichnis falls es nicht existiert
-            models_dir = "./models/whisper"
-            os.makedirs(models_dir, exist_ok=True)
-            
-            # Lade das Modell "base" und speichere es im Ordner "./models/whisper"
-            print("INFO: Loading Whisper model...")
-            model = whisper.load_model("base", download_root=models_dir)
-            
+            started = time.perf_counter()
+            model = self._get_model()
+
             print("INFO: Starting transcription...")
-            result = model.transcribe(file_path, fp16=False)  # Disable FP16 for CPU
-            
+            with self._transcription_lock:
+                result = model.transcribe(file_path, fp16=False)
+
             transcribed_text = result.get("text", "").strip()
             print(f"SUCCESS: Transcription completed: '{transcribed_text}'")
+            print(
+                "PERFORMANCE: Whisper transcription "
+                f"{(time.perf_counter() - started) * 1000.0:.1f} ms"
+            )
             return transcribed_text
             
         except Exception as e:
@@ -127,4 +147,3 @@ class SpeechToTextLocal(SpeechToText):
         sample_audio = "data/audio/Abschlussarbeit_Sprachbefehle 1-Aufnahme 12.wav"
         text = transcribe(sample_audio)
         print("Transkribierter Text:", text)
-

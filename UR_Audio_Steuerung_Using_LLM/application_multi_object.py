@@ -84,6 +84,8 @@ gesture_client    = GestureProcessClient(ROOT, display=True)
 gesture_start_error = None
 pending_command_info = None
 gesture_poll_job = None
+speech_runtime = None
+speech_runtime_lock = threading.Lock()
 
 # === WORKFLOW STATUS MANAGEMENT ===
 class WorkflowStatus:
@@ -243,6 +245,33 @@ def _warm_detection_model() -> None:
    except Exception as error:
        print(f"WARNING: YOLO background warmup failed: {error}")
 
+
+def _get_speech_runtime() -> SpeechToTextLocal:
+   global speech_runtime
+   if speech_runtime is not None:
+       return speech_runtime
+   with speech_runtime_lock:
+       if speech_runtime is None:
+           speech_runtime = SpeechToTextLocal()
+   return speech_runtime
+
+
+def _warm_speech_model() -> None:
+   started = time.perf_counter()
+   try:
+       _get_speech_runtime().warmup()
+       print(
+           "PERFORMANCE: Whisper background warmup "
+           f"{(time.perf_counter() - started) * 1000.0:.1f} ms"
+       )
+   except Exception as error:
+       print(f"WARNING: Whisper background warmup failed: {error}")
+
+
+def _warm_application_models() -> None:
+   _warm_detection_model()
+   _warm_speech_model()
+
 def capture_and_detect_objects(preserve_command: bool = False) -> None:
    """Enhanced capture with simulation mode support"""
    global detected_objects, selected_object, ie_instance
@@ -377,7 +406,7 @@ def _transcribe_audio(audio, filename):
    os.makedirs(os.path.dirname(audio_path), exist_ok=True)
    with open(audio_path, "wb") as audio_file:
        audio_file.write(audio.get_wav_data())
-   return SpeechToTextLocal().transcribe(audio_path)
+   return _get_speech_runtime().transcribe(audio_path)
 
 
 def _request_click_confirmation(prompt, reason):
@@ -1628,7 +1657,7 @@ update_button_states()
 app.after(100, load_command_history)
 app.after(
    100,
-   lambda: threading.Thread(target=_warm_detection_model, daemon=True).start(),
+   lambda: threading.Thread(target=_warm_application_models, daemon=True).start(),
 )
 
 # Add usage instructions to object display initially
