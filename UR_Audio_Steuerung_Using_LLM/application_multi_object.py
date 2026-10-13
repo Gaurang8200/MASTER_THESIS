@@ -744,6 +744,7 @@ def toggle_recording():
    except RuntimeError as error:
        messagebox.showerror("Camera unavailable", str(error))
        return
+   refresh_microphones()
    idx = mic_mapping.get(mic_var.get())
    robot_methods.clear()
    selected_object = None
@@ -1573,23 +1574,42 @@ ttk.Radiobutton(left_frame, text="macOS", variable=platform_select, value="mac")
 ttk.Radiobutton(left_frame, text="Linux", variable=platform_select, value="linux").pack(anchor="w", padx=20)
 
 ttk.Label(left_frame, text="Select Microphone:").pack(pady=(10,0))
-try:
-   microphone_options, _ = discover_input_microphones()
-except Exception as error:
-   print(f"MICROPHONE: Device discovery failed. {error}")
-   microphone_options = []
+no_microphone_name = "No microphone"
+mic_mapping: dict[str, int | None] = {no_microphone_name: None}
+mic_var = tk.StringVar(app, value=no_microphone_name)
 
-mic_mapping = {
-   option.display_name: option.device_index for option in microphone_options
-}
-default_microphone_name = "No input microphone found"
-mic_var = tk.StringVar(app, value=default_microphone_name)
-ttk.OptionMenu(
+
+def refresh_microphones() -> None:
+   selected_name = mic_var.get()
+   try:
+       microphone_options, _ = discover_input_microphones()
+   except Exception as error:
+       print(f"MICROPHONE: Device discovery failed. {error}")
+       microphone_options = []
+
+   mic_mapping.clear()
+   mic_mapping[no_microphone_name] = None
+   mic_mapping.update(
+       {
+           option.display_name: option.device_index
+           for option in microphone_options
+       }
+   )
+   mic_combo.configure(values=list(mic_mapping))
+   mic_var.set(
+       selected_name if selected_name in mic_mapping else no_microphone_name
+   )
+
+mic_combo = ttk.Combobox(
    left_frame,
-   mic_var,
-   default_microphone_name,
-   *mic_mapping.keys(),
-).pack(pady=(0,10))
+   textvariable=mic_var,
+   values=list(mic_mapping),
+   state="readonly",
+   width=34,
+   postcommand=refresh_microphones,
+)
+mic_combo.pack(pady=(0,10))
+refresh_microphones()
 
 # === ENHANCED BUTTONS WITH STATE MANAGEMENT ===
 button_frame = ttk.LabelFrame(left_frame, text="Controls", padding="5")
