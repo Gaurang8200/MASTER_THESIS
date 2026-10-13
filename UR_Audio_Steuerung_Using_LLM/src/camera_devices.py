@@ -157,17 +157,32 @@ def stable_object_depth_from_frames(
     bbox: Sequence[float],
 ) -> tuple[float, int]:
     measurements: list[tuple[float, int]] = []
-    for depth_frame_mm in depth_frames_mm:
+    frame_count = len(depth_frames_mm)
+    for frame_index, depth_frame_mm in enumerate(depth_frames_mm, start=1):
         try:
-            measurements.append(object_depth_from_box(depth_frame_mm, bbox))
-        except ValueError:
+            measurement = object_depth_from_box(depth_frame_mm, bbox)
+        except ValueError as error:
+            print(
+                f"OAK D OVERVIEW DEPTH FRAME: {frame_index}/{frame_count}, "
+                f"unavailable={error}"
+            )
             continue
+        measurements.append(measurement)
+        print(
+            f"OAK D OVERVIEW DEPTH FRAME: {frame_index}/{frame_count}, "
+            f"depth={measurement[0]:.1f} mm, samples={measurement[1]}"
+        )
     stable_depth_mm = stable_depth_from_history(
         [depth_mm for depth_mm, _ in measurements]
     )
     if stable_depth_mm is None:
         raise ValueError("OAK D object depth has fewer than three stable capture frames")
     closest = min(measurements, key=lambda item: abs(item[0] - stable_depth_mm))
+    print(
+        "OAK D OVERVIEW DEPTH RESULT: "
+        f"depth={stable_depth_mm:.1f} mm, "
+        f"valid_frames={len(measurements)}/{frame_count}, samples={closest[1]}"
+    )
     return stable_depth_mm, closest[1]
 
 
