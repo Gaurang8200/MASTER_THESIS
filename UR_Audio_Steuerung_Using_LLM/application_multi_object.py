@@ -470,6 +470,34 @@ def _listen_for_confirmation(prompt):
    return _request_click_confirmation(prompt, "spoken answer not recognized")
 
 
+def _measure_speech_object_depth(target_object):
+   message = "Speech object selected. Remove your hand while object depth is measured."
+   print(f"OAK D SPEECH DEPTH: {message}")
+   output_text.insert(tk.END, message + "\n")
+   app.update()
+   gesture_client.start(
+       selection_kind="speech_depth",
+       hold_seconds=3.0,
+       target_object=target_object,
+   )
+   deadline = time.monotonic() + 15.0
+   while time.monotonic() < deadline:
+       result = gesture_client.latest_result()
+       if result is not None:
+           result = gesture_client.finish()
+           print("OAK D SPEECH DEPTH RESULT: " + json.dumps(result, ensure_ascii=False))
+           return result
+       if not gesture_client.active:
+           break
+       app.update()
+       time.sleep(0.05)
+   result = gesture_client.finish()
+   raise ValueError(
+       "OAK D speech depth measurement failed: "
+       + str(result.get("reason", "depth_not_available"))
+   )
+
+
 def _write_selection_data(info, gesture_result):
    global selected_object
    gesture_selection = info.get("selection_mode") == "gesture"
@@ -487,37 +515,37 @@ def _write_selection_data(info, gesture_result):
    if selected_object is None:
        raise ValueError("No object was selected")
    rgb_selection_pixel = selected_object["center"]
-   left_mono_center = selected_object.get("left_mono_center")
-   left_mono_frame_size = selected_object.get("left_mono_frame_size")
-   object_depth_mm = selected_object.get("object_depth_mm")
-   object_depth_sample_count = selected_object.get("object_depth_sample_count")
+   left_mono_center = None
+   left_mono_frame_size = None
+   object_depth_mm = None
+   object_depth_sample_count = None
    selection_bbox = selected_object["bbox"]
-   mapping_error = selected_object.get(
-       "left_mono_mapping_error",
-       "left mono mapping data is missing",
-   )
-   if gesture_selection:
-       live_object = gesture_result.get("selected_object")
+   depth_result = gesture_result if gesture_selection else None
+   if exec_mode.get() == "real" and not gesture_selection:
+       depth_result = _measure_speech_object_depth(selected_object)
+   mapping_error = "live object depth data is missing"
+   if depth_result is not None:
+       live_object = depth_result.get("selected_object")
        if not isinstance(live_object, dict):
-           raise ValueError("Gesture result has no live selected object")
+           raise ValueError("Live depth result has no selected object")
        live_bbox = live_object.get("bbox")
        if not isinstance(live_bbox, list) or len(live_bbox) != 4:
-           raise ValueError("Gesture result has no live object bounding box")
+           raise ValueError("Live depth result has no object bounding box")
        live_center = live_object.get("center")
        if not isinstance(live_center, list) or len(live_center) != 2:
-           raise ValueError("Gesture result has no live object center")
+           raise ValueError("Live depth result has no object center")
        selection_bbox = live_bbox
        rgb_selection_pixel = live_center
-       left_mono_center = gesture_result.get("left_mono_pixel")
+       left_mono_center = depth_result.get("left_mono_pixel")
        left_mono_frame_size = [
-           gesture_result.get("left_mono_frame_width"),
-           gesture_result.get("left_mono_frame_height"),
+           depth_result.get("left_mono_frame_width"),
+           depth_result.get("left_mono_frame_height"),
        ]
-       object_depth_mm = gesture_result.get("object_depth_mm")
-       object_depth_sample_count = gesture_result.get("object_depth_sample_count")
-       mapping_error = gesture_result.get(
+       object_depth_mm = depth_result.get("object_depth_mm")
+       object_depth_sample_count = depth_result.get("object_depth_sample_count")
+       mapping_error = depth_result.get(
            "left_mono_mapping_error",
-           "gesture point has no left mono mapping",
+           "live object has no left mono mapping",
        )
    if exec_mode.get() == "real" and (
        not isinstance(rgb_selection_pixel, list)
@@ -530,7 +558,7 @@ def _write_selection_data(info, gesture_result):
        or object_depth_sample_count is None
    ):
        raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
-   if gesture_selection:
+   if exec_mode.get() == "real":
        print(
            "OAK D SELECTED OBJECT: "
            f"rgb_u={float(rgb_selection_pixel[0]):.2f}, "
@@ -543,15 +571,7 @@ def _write_selection_data(info, gesture_result):
    os.makedirs(txt_dir, exist_ok=True)
    depth_path = None
    if exec_mode.get() == "real":
-       if gesture_selection:
-           source_depth_path = str(gesture_result.get("depth_path", ""))
-       else:
-           metadata_path = os.path.join(txt_dir, "latest_depth_capture.json")
-           if not os.path.isfile(metadata_path):
-               raise FileNotFoundError("The synchronized OAK D depth capture is missing")
-           with open(metadata_path, "r", encoding="utf-8") as metadata_file:
-               depth_metadata = json.load(metadata_file)
-           source_depth_path = str(depth_metadata.get("depth_path", ""))
+       source_depth_path = str((depth_result or {}).get("depth_path", ""))
        if not source_depth_path or not os.path.isfile(source_depth_path):
            raise FileNotFoundError("The synchronized OAK D depth file is missing")
        depth_path = os.path.join(txt_dir, "selected_depth.npy")
@@ -571,8 +591,8 @@ def _write_selection_data(info, gesture_result):
        "object_depth_sample_count": object_depth_sample_count,
        "selection_phase": "overview",
        "selection_source": info.get("selection_mode", "speech"),
-       "gesture_session_id": info.get("gesture_session_id"),
-       "fingertip_pixel": gesture_result.get("fingertip_pixel"),
+       "gesture_session_id": (depth_result or {}).get("session_id"),
+       "fingertip_pixel": (depth_result or {}).get("fingertip_pixel"),
        "depth_path": depth_path,
        "depth_units": "millimetres" if depth_path else None,
        "depth_aligned_to": "oak_d_rgb" if depth_path else None,

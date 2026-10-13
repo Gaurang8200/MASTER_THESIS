@@ -31,7 +31,7 @@ from fingertip_selection import (
 from gesture_classes import GestureName
 from gesture_detector import GestureDetector
 from object_detector import Yolov5ObjectDetector, box_iou
-from schemas import DetectedObject, GestureFrame, SelectionMode
+from schemas import BoundingBox, DetectedObject, GestureFrame, SelectionMode
 
 LOGGER = logging.getLogger(__name__)
 CONTRACT_VERSION = "1.0"
@@ -153,6 +153,21 @@ def _tracked_object(
     return closest if box_iou(selected.box, closest.box) >= 0.25 else None
 
 
+def _speech_target(
+    objects: Sequence[DetectedObject],
+    class_name: str,
+    overview_bbox: Sequence[float],
+) -> DetectedObject | None:
+    candidates = [item for item in objects if item.class_name.lower() == class_name.lower()]
+    if len(candidates) == 1:
+        return candidates[0]
+    target_box = BoundingBox(*[float(value) for value in overview_bbox])
+    if not candidates:
+        return None
+    closest = max(candidates, key=lambda item: box_iou(target_box, item.box))
+    return closest if box_iou(target_box, closest.box) >= 0.25 else None
+
+
 REJECTION_INFORMATION_RANK = {
     "no_usable_frame": 0,
     "gesture_inference_failed": 1,
@@ -251,9 +266,15 @@ def run_session(
     timeout_seconds: float,
     hold_seconds: float,
     selection_kind: str,
+    target_class: str | None,
+    target_bbox: Sequence[float] | None,
     display: bool,
     parent_pid: int | None,
 ) -> int:
+    if selection_kind == "speech_depth" and (
+        not target_class or target_bbox is None or len(target_bbox) != 4
+    ):
+        raise ValueError("speech depth selection requires an object class and box")
     gesture = GestureDetector(
         model_config=config.model,
         confidence=config.confidence,
@@ -318,7 +339,11 @@ def run_session(
 
             frame_started = time.perf_counter()
             gesture_frame = gesture.detect(frame, frame_index)
-            objects = objects_source.get_objects(frame) if gesture_frame.ok else []
+            objects = (
+                objects_source.get_objects(frame)
+                if gesture_frame.ok or selection_kind == "speech_depth"
+                else []
+            )
             fingertip = gesture_frame.best(GestureName.INDEX_FINGERTIP)
             observed_at = time.monotonic()
             pointing_detected = gesture_frame.has(GestureName.POINTING_FINGER)
@@ -334,6 +359,14 @@ def run_session(
                 if center is not None
                 else None
             )
+
+            if selection_kind == "speech_depth" and not selection_complete:
+                selected = _speech_target(objects, target_class or "", target_bbox or ())
+                if selected is not None:
+                    selection_complete = True
+                    depth_history.clear()
+                    hand_clear_since = None
+                    display_reason = "speech object selected, remove hand for depth"
 
             touch = None
             if selection_kind == "object" and center is not None and pointing_present:
@@ -369,11 +402,14 @@ def run_session(
                 depth_history.clear()
                 hand_clear_since = None
                 display_reason = "selected, remove hand for depth"
-            elif selection_kind == "object" and selection_complete and selected:
+            elif selection_kind in {"object", "speech_depth"} and selection_complete and selected:
                 tracked = _tracked_object(selected, objects)
                 if tracked is None:
                     hand_clear_since = None
                     display_reason = "selected object not visible"
+                elif not gesture_frame.ok:
+                    hand_clear_since = None
+                    display_reason = "hand detection unavailable"
                 elif (
                     pointing_detected
                     and center is not None
@@ -502,7 +538,9 @@ def run_session(
                     display_reason = "selected"
                     _write_json(result_file, result)
             elif not selection_complete:
-                if selection_kind == "location":
+                if selection_kind == "speech_depth":
+                    reason = "spoken_object_not_visible"
+                elif selection_kind == "location":
                     reason = (
                         "pointing_not_stable"
                         if center is not None and pointing_present
@@ -598,9 +636,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--parent-pid", type=int, default=None)
     parser.add_argument(
         "--selection-kind",
-        choices=("object", "location"),
+        choices=("object", "location", "speech_depth"),
         default="object",
     )
+    parser.add_argument("--target-class", default=None)
+    parser.add_argument("--target-bbox", nargs=4, type=float, default=None)
     parser.add_argument("--display", dest="display", action="store_true", default=True)
     parser.add_argument("--no-display", dest="display", action="store_false")
     return parser.parse_args(argv)
@@ -621,6 +661,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         timeout_seconds=arguments.timeout_seconds,
         hold_seconds=arguments.hold_seconds,
         selection_kind=arguments.selection_kind,
+        target_class=arguments.target_class,
+        target_bbox=arguments.target_bbox,
         display=arguments.display,
         parent_pid=arguments.parent_pid,
     )

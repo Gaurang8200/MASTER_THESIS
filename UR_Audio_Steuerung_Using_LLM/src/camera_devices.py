@@ -152,75 +152,6 @@ def stable_depth_from_history(depths_mm: Sequence[float]) -> float | None:
     return candidate if deviation <= MAX_TEMPORAL_DEVIATION_MM else None
 
 
-def stable_object_depth_from_frames(
-    depth_frames_mm: Sequence[np.ndarray],
-    bbox: Sequence[float],
-) -> tuple[float, int]:
-    measurements: list[tuple[float, int]] = []
-    frame_count = len(depth_frames_mm)
-    for frame_index, depth_frame_mm in enumerate(depth_frames_mm, start=1):
-        try:
-            measurement = object_depth_from_box(depth_frame_mm, bbox)
-        except ValueError as error:
-            print(
-                f"OAK D OVERVIEW DEPTH FRAME: {frame_index}/{frame_count}, "
-                f"unavailable={error}"
-            )
-            continue
-        measurements.append(measurement)
-        print(
-            f"OAK D OVERVIEW DEPTH FRAME: {frame_index}/{frame_count}, "
-            f"depth={measurement[0]:.1f} mm, samples={measurement[1]}"
-        )
-    stable_depth_mm = stable_depth_from_history(
-        [depth_mm for depth_mm, _ in measurements]
-    )
-    if stable_depth_mm is None:
-        raise ValueError("OAK D object depth has fewer than three stable capture frames")
-    closest = min(measurements, key=lambda item: abs(item[0] - stable_depth_mm))
-    print(
-        "OAK D OVERVIEW DEPTH RESULT: "
-        f"depth={stable_depth_mm:.1f} mm, "
-        f"valid_frames={len(measurements)}/{frame_count}, samples={closest[1]}"
-    )
-    return stable_depth_mm, closest[1]
-
-
-def map_detections_to_left_mono(
-    detections: list[dict[str, Any]],
-    frame: OakDFrame,
-    depth_frames_mm: Sequence[np.ndarray] | None = None,
-) -> list[dict[str, Any]]:
-    mapped_detections: list[dict[str, Any]] = []
-    left_height, left_width = frame.left_mono.shape[:2]
-    for detection in detections:
-        mapped = dict(detection)
-        try:
-            center = [float(value) for value in detection["center"]]
-            if depth_frames_mm is None:
-                object_depth_mm, sample_count = object_depth_from_box(
-                    frame.depth_mm,
-                    detection["bbox"],
-                )
-            else:
-                object_depth_mm, sample_count = stable_object_depth_from_frames(
-                    depth_frames_mm,
-                    detection["bbox"],
-                )
-            left_center = frame.project_rgb_point_to_left(
-                (center[0], center[1]),
-                object_depth_mm,
-            )
-            mapped["left_mono_center"] = [left_center[0], left_center[1]]
-            mapped["left_mono_frame_size"] = [left_width, left_height]
-            mapped["object_depth_mm"] = object_depth_mm
-            mapped["object_depth_sample_count"] = sample_count
-        except (KeyError, RuntimeError, TypeError, ValueError) as error:
-            mapped["left_mono_mapping_error"] = str(error)
-        mapped_detections.append(mapped)
-    return mapped_detections
-
-
 def discover_oak_cameras() -> list[CameraOption]:
     try:
         import depthai as dai
@@ -255,11 +186,12 @@ def configure_short_range_stereo(stereo: Any) -> None:
 
 
 class RgbCameraStream:
-    def __init__(self, width: int, height: int) -> None:
+    def __init__(self, width: int, height: int, color_only: bool = False) -> None:
         if width <= 0 or height <= 0:
             raise ValueError("Camera dimensions must be positive")
         self._width = width
         self._height = height
+        self._color_only = color_only
         self._device = os.environ.get(CAMERA_DEVICE_ENV, "")
         self._oak_device: Any = None
         self._oak_pipeline: Any = None
@@ -279,10 +211,17 @@ class RgbCameraStream:
         self._start_oak_rgbd()
 
     def read(self) -> np.ndarray | None:
+        if self._color_only:
+            if self._oak_queue is None:
+                raise RuntimeError("OAK D camera is not open")
+            message = self._oak_queue.get()
+            return message.getCvFrame() if message is not None else None
         frame = self.read_rgbd()
         return frame.color if frame is not None else None
 
     def read_rgbd(self) -> OakDFrame | None:
+        if self._color_only:
+            raise RuntimeError("RGB only camera does not provide depth")
         if self._oak_queue is None:
             raise RuntimeError("OAK D camera is not open")
         messages = self._oak_queue.get()
@@ -339,35 +278,37 @@ class RgbCameraStream:
                 sensorResolution=OAK_RGB_SENSOR_RESOLUTION,
                 sensorFps=15,
             )
-            left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
-            right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
-            stereo = pipeline.create(dai.node.StereoDepth)
-            configure_short_range_stereo(stereo)
-            sync = pipeline.create(dai.node.Sync)
-            sync.setSyncThreshold(timedelta(milliseconds=34))
-
             rgb_output = rgb.requestOutput(
                 size=(self._width, self._height),
                 type=dai.ImgFrame.Type.BGR888p,
                 fps=15,
                 enableUndistortion=True,
             )
-            left_depth_output = left.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
-            right_depth_output = right.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
-            left_mono_output = left.requestOutput(size=OAK_MONO_RESOLUTION, fps=15)
-            left_depth_output.link(stereo.left)
-            right_depth_output.link(stereo.right)
-            rgb_output.link(sync.inputs["rgb"])
-            left_mono_output.link(sync.inputs["left_mono"])
-            if device.getPlatform() == dai.Platform.RVC4:
-                align = pipeline.create(dai.node.ImageAlign)
-                stereo.depth.link(align.input)
-                rgb_output.link(align.inputAlignTo)
-                align.outputAligned.link(sync.inputs["depth_aligned"])
+            if self._color_only:
+                queue = rgb_output.createOutputQueue(maxSize=2, blocking=False)
             else:
-                rgb_output.link(stereo.inputAlignTo)
-                stereo.depth.link(sync.inputs["depth_aligned"])
-            queue = sync.out.createOutputQueue(maxSize=2, blocking=False)
+                left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+                right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+                stereo = pipeline.create(dai.node.StereoDepth)
+                configure_short_range_stereo(stereo)
+                sync = pipeline.create(dai.node.Sync)
+                sync.setSyncThreshold(timedelta(milliseconds=34))
+                left_depth_output = left.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
+                right_depth_output = right.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
+                left_mono_output = left.requestOutput(size=OAK_MONO_RESOLUTION, fps=15)
+                left_depth_output.link(stereo.left)
+                right_depth_output.link(stereo.right)
+                rgb_output.link(sync.inputs["rgb"])
+                left_mono_output.link(sync.inputs["left_mono"])
+                if device.getPlatform() == dai.Platform.RVC4:
+                    align = pipeline.create(dai.node.ImageAlign)
+                    stereo.depth.link(align.input)
+                    rgb_output.link(align.inputAlignTo)
+                    align.outputAligned.link(sync.inputs["depth_aligned"])
+                else:
+                    rgb_output.link(stereo.inputAlignTo)
+                    stereo.depth.link(sync.inputs["depth_aligned"])
+                queue = sync.out.createOutputQueue(maxSize=2, blocking=False)
             pipeline.start()
         except Exception:
             try:

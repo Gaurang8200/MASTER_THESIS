@@ -5,14 +5,13 @@ import subprocess
 import time
 import sys
 import json
-import numpy as np
 from pathlib import Path
 
 AUDIO_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(AUDIO_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(AUDIO_PROJECT_ROOT))
 
-from src.camera_devices import RgbCameraStream, map_detections_to_left_mono
+from src.camera_devices import RgbCameraStream
 from src.yolo_detection_runtime import run_yolo_detection
 
 # === Configuration Constants ===
@@ -23,7 +22,6 @@ ROBOT_RESOLUTION = (2560, 1472)
 UNIVERSAL_CAPTURE_RESOLUTION = (2560, 1472)
 FRANKA_CAPTURE_RESOLUTION = (1280, 720)
 IMAGE_RESOLUTION = UNIVERSAL_CAPTURE_RESOLUTION
-OVERVIEW_DEPTH_FRAMES = 30
 
 
 def get_capture_resolution():
@@ -57,28 +55,17 @@ class MultiObjectDetector:
         self.detected_objects = []
         self.object_selection_data = {}
         self.last_detection_result = {}
-        self.last_rgbd_frame = None
-        self.last_depth_frames = []
     
     def capture_image(self, filename="photo_1.jpg"):
         """Capture image from camera"""
         camera = None
         try:
             capture_width, capture_height = get_capture_resolution()
-            camera = RgbCameraStream(capture_width, capture_height)
+            camera = RgbCameraStream(capture_width, capture_height, color_only=True)
             camera.start()
-            rgbd_frame = None
-            depth_frames = []
-            for _ in range(OVERVIEW_DEPTH_FRAMES):
-                captured_frame = camera.read_rgbd()
-                if captured_frame is not None:
-                    rgbd_frame = captured_frame
-                    depth_frames.append(captured_frame.depth_mm)
-            if rgbd_frame is None or len(depth_frames) < 3:
-                raise RuntimeError("Failed to capture synchronized OAK D RGB and depth")
-            frame = rgbd_frame.color
-            self.last_rgbd_frame = rgbd_frame
-            self.last_depth_frames = depth_frames
+            frame = camera.read()
+            if frame is None:
+                raise RuntimeError("Failed to capture OAK D RGB image")
 
             actual_height, actual_width = frame.shape[:2]
             robot_type = os.environ.get("ROBOT_TYPE", "universal").strip().lower()
@@ -98,24 +85,7 @@ class MultiObjectDetector:
             image_path = os.path.join(PHOTOS_DIR, filename)
             if not cv2.imwrite(image_path, frame):
                 raise RuntimeError(f"Could not save captured image {image_path}")
-            depth_path = os.path.join(TXT_FILE_DIR, "latest_depth.npy")
-            np.save(depth_path, rgbd_frame.depth_mm, allow_pickle=False)
-            metadata_path = os.path.join(TXT_FILE_DIR, "latest_depth_capture.json")
-            with open(metadata_path, "w", encoding="utf-8") as metadata_file:
-                json.dump(
-                    {
-                        "depth_path": depth_path,
-                        "width": actual_width,
-                        "height": actual_height,
-                        "units": "millimetres",
-                        "aligned_to": "oak_d_rgb",
-                    },
-                    metadata_file,
-                    indent=2,
-                )
-            
             print(f"SUCCESS: Image captured: {image_path}")
-            print(f"SUCCESS: Aligned depth captured: {depth_path}")
             return image_path
         except Exception as e:
             print(f"ERROR: Camera capture failed: {e}")
@@ -195,16 +165,6 @@ class MultiObjectDetector:
                     data = json.load(f)
                 
                 self.detected_objects = data.get('objects', [])
-                if self.last_rgbd_frame is not None:
-                    self.detected_objects = map_detections_to_left_mono(
-                        self.detected_objects,
-                        self.last_rgbd_frame,
-                        self.last_depth_frames,
-                    )
-                    data['objects'] = self.detected_objects
-                    data.setdefault('metadata', {})['coordinate_frame'] = 'oak_d_left_mono'
-                    with open(json_path, 'w', encoding='utf-8') as result_file:
-                        json.dump(data, result_file, indent=2)
                 print(f"DEBUG: Loaded {len(self.detected_objects)} objects from JSON")
                 
                 # Create object selection data
