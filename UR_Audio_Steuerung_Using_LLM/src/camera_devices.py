@@ -152,9 +152,29 @@ def stable_depth_from_history(depths_mm: Sequence[float]) -> float | None:
     return candidate if deviation <= MAX_TEMPORAL_DEVIATION_MM else None
 
 
+def stable_object_depth_from_frames(
+    depth_frames_mm: Sequence[np.ndarray],
+    bbox: Sequence[float],
+) -> tuple[float, int]:
+    measurements: list[tuple[float, int]] = []
+    for depth_frame_mm in depth_frames_mm:
+        try:
+            measurements.append(object_depth_from_box(depth_frame_mm, bbox))
+        except ValueError:
+            continue
+    stable_depth_mm = stable_depth_from_history(
+        [depth_mm for depth_mm, _ in measurements]
+    )
+    if stable_depth_mm is None:
+        raise ValueError("OAK D object depth has fewer than three stable capture frames")
+    closest = min(measurements, key=lambda item: abs(item[0] - stable_depth_mm))
+    return stable_depth_mm, closest[1]
+
+
 def map_detections_to_left_mono(
     detections: list[dict[str, Any]],
     frame: OakDFrame,
+    depth_frames_mm: Sequence[np.ndarray] | None = None,
 ) -> list[dict[str, Any]]:
     mapped_detections: list[dict[str, Any]] = []
     left_height, left_width = frame.left_mono.shape[:2]
@@ -162,10 +182,16 @@ def map_detections_to_left_mono(
         mapped = dict(detection)
         try:
             center = [float(value) for value in detection["center"]]
-            object_depth_mm, sample_count = object_depth_from_box(
-                frame.depth_mm,
-                detection["bbox"],
-            )
+            if depth_frames_mm is None:
+                object_depth_mm, sample_count = object_depth_from_box(
+                    frame.depth_mm,
+                    detection["bbox"],
+                )
+            else:
+                object_depth_mm, sample_count = stable_object_depth_from_frames(
+                    depth_frames_mm,
+                    detection["bbox"],
+                )
             left_center = frame.project_rgb_point_to_left(
                 (center[0], center[1]),
                 object_depth_mm,
