@@ -389,7 +389,14 @@ def capture_and_detect_objects(preserve_command: bool = False) -> None:
 
 def callback(recognizer, audio):
    global last_audio
-   last_audio = audio
+   if last_audio is None:
+       last_audio = audio
+   else:
+       last_audio = sr.AudioData(
+           last_audio.frame_data + audio.frame_data,
+           audio.sample_rate,
+           audio.sample_width,
+       )
    print("Audio captured.")
 
 def _operator_feedback():
