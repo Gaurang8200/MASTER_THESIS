@@ -17,6 +17,7 @@ if not api_key:
     raise RuntimeError("OPEN_AI_KEY MISSING")
 
 client = OpenAI(api_key=api_key)
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 # German-English object translation mapping
 OBJECT_TRANSLATIONS = {
@@ -113,7 +114,7 @@ class InformationExtractionOpenAIMulti(InformationExtractor):
         """Load available objects from multi-object detection results"""
         try:
             # Load from detection results
-            json_path = os.path.join("Code-YOLOv5-Windows_llm", "txt_file", "detected_objects.json")
+            json_path = os.path.join(PROJECT_ROOT, "Code-YOLOv5-Windows_llm", "txt_file", "detected_objects.json")
             if os.path.exists(json_path):
                 with open(json_path, 'r') as f:
                     self.detection_data = json.load(f)
