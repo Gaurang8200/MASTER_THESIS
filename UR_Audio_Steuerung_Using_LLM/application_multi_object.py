@@ -88,6 +88,7 @@ speech_runtime = None
 speech_runtime_lock = threading.Lock()
 auto_running = False
 auto_job = None
+AUTO_STEP_DELAY_MS = 2000
 
 # === WORKFLOW STATUS MANAGEMENT ===
 class WorkflowStatus:
@@ -1216,6 +1217,14 @@ def _run_auto_detection() -> None:
    if not detected_objects:
        _set_auto_running(False)
        return
+   auto_job = app.after(AUTO_STEP_DELAY_MS, _run_auto_recording)
+
+
+def _run_auto_recording() -> None:
+   global auto_job
+   auto_job = None
+   if not auto_running:
+       return
    toggle_recording()
    if not recording:
        _set_auto_running(False)
@@ -1237,7 +1246,7 @@ def _continue_auto_pipeline(command_ready: bool) -> None:
    if not command_ready:
        _set_auto_running(False)
        return
-   auto_job = app.after(100, _run_auto_execution)
+   auto_job = app.after(AUTO_STEP_DELAY_MS, _run_auto_execution)
 
 
 def start_auto_pipeline() -> None:
