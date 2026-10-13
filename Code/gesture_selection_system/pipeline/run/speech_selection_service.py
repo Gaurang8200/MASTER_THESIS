@@ -45,14 +45,23 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     temporary.replace(path)
 
 
-def _stop_requested(path: Path) -> bool:
+def _take_request(path: Path) -> dict[str, object] | None:
     if not path.is_file():
-        return False
+        return None
     try:
         payload = json.loads(path.read_text(encoding="utf8"))
     except (OSError, json.JSONDecodeError):
-        return False
-    return payload.get("command") == "stop"
+        return None
+    path.unlink(missing_ok=True)
+    return payload if isinstance(payload, dict) else None
+
+
+def _speech_target_request(payload: dict[str, object]) -> tuple[str, list[float]]:
+    class_name = str(payload.get("class_name", ""))
+    bbox = payload.get("bbox")
+    if not class_name or not isinstance(bbox, list) or len(bbox) != 4:
+        raise ValueError("speech depth selection requires an object class and box")
+    return class_name, [float(value) for value in bbox]
 
 
 def _object_payload(
@@ -266,15 +275,11 @@ def run_session(
     timeout_seconds: float,
     hold_seconds: float,
     selection_kind: str,
-    target_class: str | None,
-    target_bbox: Sequence[float] | None,
     display: bool,
     parent_pid: int | None,
 ) -> int:
-    if selection_kind == "speech_depth" and (
-        not target_class or target_bbox is None or len(target_bbox) != 4
-    ):
-        raise ValueError("speech depth selection requires an object class and box")
+    target_class: str | None = None
+    target_bbox: list[float] | None = None
     gesture = GestureDetector(
         model_config=config.model,
         confidence=config.confidence,
@@ -324,8 +329,23 @@ def run_session(
             if not _parent_is_alive(parent_pid):
                 result = _base_result(session_id, "rejected", "parent_process_stopped")
                 break
-            if _stop_requested(request_file):
-                break
+            request = _take_request(request_file)
+            if request is not None:
+                command = request.get("command")
+                if command == "stop":
+                    break
+                if command == "select_speech_object":
+                    target_class, target_bbox = _speech_target_request(request)
+                    selection_kind = "speech_depth"
+                    selected = None
+                    selection_complete = False
+                    selected_fingertip = None
+                    selected_hold_seconds = 0.0
+                    depth_history.clear()
+                    hand_clear_since = None
+                    last_depth_error = None
+                    result = _base_result(session_id, "rejected", "spoken_object_not_visible")
+                    display_reason = "finding spoken object"
             if display and window_created and not _window_is_visible():
                 result = _base_result(session_id, "rejected", "operator_cancelled")
                 break
@@ -636,11 +656,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--parent-pid", type=int, default=None)
     parser.add_argument(
         "--selection-kind",
-        choices=("object", "location", "speech_depth"),
+        choices=("object", "location"),
         default="object",
     )
-    parser.add_argument("--target-class", default=None)
-    parser.add_argument("--target-bbox", nargs=4, type=float, default=None)
     parser.add_argument("--display", dest="display", action="store_true", default=True)
     parser.add_argument("--no-display", dest="display", action="store_false")
     return parser.parse_args(argv)
@@ -661,8 +679,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         timeout_seconds=arguments.timeout_seconds,
         hold_seconds=arguments.hold_seconds,
         selection_kind=arguments.selection_kind,
-        target_class=arguments.target_class,
-        target_bbox=arguments.target_bbox,
         display=arguments.display,
         parent_pid=arguments.parent_pid,
     )

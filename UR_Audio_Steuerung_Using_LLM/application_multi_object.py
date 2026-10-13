@@ -471,19 +471,15 @@ def _listen_for_confirmation(prompt):
 
 
 def _measure_speech_object_depth(target_object):
-   message = "Speech object selected. Remove your hand while object depth is measured."
+   message = "Speech object selected. Keep your hand clear while depth is measured."
    print(f"OAK D SPEECH DEPTH: {message}")
    output_text.insert(tk.END, message + "\n")
    app.update()
-   gesture_client.start(
-       selection_kind="speech_depth",
-       hold_seconds=3.0,
-       target_object=target_object,
-   )
+   gesture_client.select_speech_object(target_object)
    deadline = time.monotonic() + 15.0
    while time.monotonic() < deadline:
        result = gesture_client.latest_result()
-       if result is not None:
+       if result is not None and result.get("selection_kind") == "speech_depth":
            result = gesture_client.finish()
            print("OAK D SPEECH DEPTH RESULT: " + json.dumps(result, ensure_ascii=False))
            return result
@@ -713,22 +709,30 @@ def _finish_recording():
        stop_listening(wait_for_stop=True)
        stop_listening = None
    btn_record.config(text="Start Recording")
-   gesture_result = gesture_client.finish() if gesture_start_error is None else {
-       "status": "error",
-       "reason": "gesture_process_not_started",
+   gesture_result = live_gesture_result or {
+       "status": "pending",
+       "reason": "awaiting_speech_selection",
        "safe_to_use": False,
    }
-   if gesture_was_fresh:
-       gesture_result = live_gesture_result
-   else:
+   if gesture_start_error is not None:
+       gesture_result = {
+           "status": "error",
+           "reason": "gesture_process_not_started",
+           "safe_to_use": False,
+       }
+   elif gesture_was_fresh or last_audio is None:
+       gesture_result = gesture_client.finish()
        gesture_was_fresh = _gesture_result_is_fresh(gesture_result)
-   print("MULTIMODAL: Gesture result " + json.dumps(gesture_result, ensure_ascii=False))
+       print("MULTIMODAL: Gesture result " + json.dumps(gesture_result, ensure_ascii=False))
+   else:
+       print("MULTIMODAL: Keeping gesture camera open for speech depth")
    text = ""
    if last_audio is not None:
        try:
            text = _transcribe_audio(last_audio, "live_audio.wav")
            output_text.insert(tk.END, "\nTranscribed Text:\n" + text + "\n")
        except Exception as error:
+           gesture_client.cancel()
            output_text.insert(tk.END, f"Transcription error: {error}\n")
            update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
            return
@@ -742,6 +746,9 @@ def _finish_recording():
        print(f"COMMAND PREPARATION ERROR: {error}")
        output_text.insert(tk.END, f"Command preparation error: {error}\n")
        prepared = False
+   finally:
+       if gesture_client.active:
+           gesture_client.finish()
    update_workflow_status(
        WorkflowStatus.READY_FOR_EXECUTION
        if prepared

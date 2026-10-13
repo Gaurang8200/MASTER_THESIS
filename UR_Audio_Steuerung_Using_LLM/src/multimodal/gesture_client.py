@@ -58,24 +58,14 @@ class GestureProcessClient:
         self,
         selection_kind: str = "object",
         hold_seconds: float = 3.0,
-        target_object: dict[str, object] | None = None,
     ) -> GestureSession:
         self.cancel()
-        if selection_kind not in {"object", "location", "speech_depth"}:
+        if selection_kind not in {"object", "location"}:
             raise ValueError(f"unsupported gesture selection kind {selection_kind}")
         if hold_seconds <= 0.0:
             raise ValueError("gesture hold time must be positive")
         if not self._service.is_file():
             raise FileNotFoundError(f"gesture service not found at {self._service}")
-        target_class = ""
-        target_bbox: list[object] | None = None
-        if selection_kind == "speech_depth":
-            target_class = str((target_object or {}).get("class_name", ""))
-            raw_bbox = (target_object or {}).get("bbox")
-            if not target_class or not isinstance(raw_bbox, list) or len(raw_bbox) != 4:
-                raise ValueError("speech depth selection requires a detected object")
-            target_bbox = raw_bbox
-
         self._runtime_dir.mkdir(parents=True, exist_ok=True)
         session_id = uuid.uuid4().hex
         session = GestureSession(
@@ -106,9 +96,6 @@ class GestureProcessClient:
             "--parent-pid",
             str(os.getpid()),
         ]
-        if selection_kind == "speech_depth":
-            command.extend(["--target-class", target_class, "--target-bbox"])
-            command.extend(str(value) for value in target_bbox or ())
         if not self._display:
             command.append("--no-display")
         self._process = subprocess.Popen(
@@ -122,6 +109,20 @@ class GestureProcessClient:
         self._wait_until_ready(session, self._process)
         print(f"MULTIMODAL: Gesture session started {session.session_id}")
         return session
+
+    def select_speech_object(self, target_object: dict[str, object]) -> None:
+        session = self._session
+        if not self.active or session is None:
+            raise RuntimeError("gesture camera session is not active")
+        class_name = str(target_object.get("class_name", ""))
+        bbox = target_object.get("bbox")
+        if not class_name or not isinstance(bbox, list) or len(bbox) != 4:
+            raise ValueError("speech depth selection requires a detected object")
+        session.result_file.unlink(missing_ok=True)
+        self._write_request(
+            session.request_file,
+            {"command": "select_speech_object", "class_name": class_name, "bbox": bbox},
+        )
 
     def latest_result(self) -> dict[str, object] | None:
         self._print_log_updates()
@@ -143,7 +144,7 @@ class GestureProcessClient:
                 "safe_to_use": False,
             }
 
-        self._write_request(session.request_file)
+        self._write_request(session.request_file, {"command": "stop"})
         try:
             process.wait(timeout=wait_seconds)
         except subprocess.TimeoutExpired:
@@ -174,9 +175,9 @@ class GestureProcessClient:
         self._session = None
 
     @staticmethod
-    def _write_request(path: Path) -> None:
+    def _write_request(path: Path, payload: dict[str, object]) -> None:
         temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(json.dumps({"command": "stop"}), encoding="utf8")
+        temporary.write_text(json.dumps(payload), encoding="utf8")
         temporary.replace(path)
 
     @staticmethod
