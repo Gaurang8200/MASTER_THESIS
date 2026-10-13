@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Sequence
@@ -218,6 +219,18 @@ class RgbCameraStream:
             return message.getCvFrame() if message is not None else None
         frame = self.read_rgbd()
         return frame.color if frame is not None else None
+
+    def read_settled(self, settle_seconds: float) -> np.ndarray | None:
+        if settle_seconds < 0.0:
+            raise ValueError("camera settling time cannot be negative")
+        print(f"CAMERA: Settling RGB controls for {settle_seconds:.1f} seconds")
+        deadline = time.monotonic() + settle_seconds
+        frame = self.read()
+        while time.monotonic() < deadline:
+            latest = self.read()
+            if latest is not None:
+                frame = latest
+        return frame
 
     def read_rgbd(self) -> OakDFrame | None:
         if self._color_only:

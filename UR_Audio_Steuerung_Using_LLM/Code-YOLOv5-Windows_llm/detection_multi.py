@@ -63,7 +63,7 @@ class MultiObjectDetector:
             capture_width, capture_height = get_capture_resolution()
             camera = RgbCameraStream(capture_width, capture_height, color_only=True)
             camera.start()
-            frame = camera.read()
+            frame = camera.read_settled(2.0)
             if frame is None:
                 raise RuntimeError("Failed to capture OAK D RGB image")
 
