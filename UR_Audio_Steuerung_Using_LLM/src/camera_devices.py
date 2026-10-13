@@ -350,7 +350,7 @@ class RgbCameraStream:
                 size=(self._width, self._height),
                 type=dai.ImgFrame.Type.BGR888p,
                 fps=15,
-                enableUndistortion=False,
+                enableUndistortion=True,
             )
             left_depth_output = left.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)
             right_depth_output = right.requestOutput(size=OAK_STEREO_RESOLUTION, fps=15)

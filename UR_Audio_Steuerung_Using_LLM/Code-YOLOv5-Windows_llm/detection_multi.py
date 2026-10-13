@@ -23,7 +23,7 @@ ROBOT_RESOLUTION = (2560, 1472)
 UNIVERSAL_CAPTURE_RESOLUTION = (2560, 1472)
 FRANKA_CAPTURE_RESOLUTION = (1280, 720)
 IMAGE_RESOLUTION = UNIVERSAL_CAPTURE_RESOLUTION
-OVERVIEW_DEPTH_FRAMES = 5
+OVERVIEW_DEPTH_FRAMES = 30
 
 
 def get_capture_resolution():
@@ -67,14 +67,18 @@ class MultiObjectDetector:
             capture_width, capture_height = get_capture_resolution()
             camera = RgbCameraStream(capture_width, capture_height)
             camera.start()
-            rgbd_frames = [camera.read_rgbd() for _ in range(OVERVIEW_DEPTH_FRAMES)]
-            rgbd_frames = [frame for frame in rgbd_frames if frame is not None]
-            if len(rgbd_frames) < 3:
+            rgbd_frame = None
+            depth_frames = []
+            for _ in range(OVERVIEW_DEPTH_FRAMES):
+                captured_frame = camera.read_rgbd()
+                if captured_frame is not None:
+                    rgbd_frame = captured_frame
+                    depth_frames.append(captured_frame.depth_mm)
+            if rgbd_frame is None or len(depth_frames) < 3:
                 raise RuntimeError("Failed to capture synchronized OAK D RGB and depth")
-            rgbd_frame = rgbd_frames[-1]
             frame = rgbd_frame.color
             self.last_rgbd_frame = rgbd_frame
-            self.last_depth_frames = [item.depth_mm for item in rgbd_frames]
+            self.last_depth_frames = depth_frames
 
             actual_height, actual_width = frame.shape[:2]
             robot_type = os.environ.get("ROBOT_TYPE", "universal").strip().lower()
