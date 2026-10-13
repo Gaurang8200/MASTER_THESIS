@@ -10,24 +10,6 @@ import speech_recognition as sr
 
 
 SYSTEM_DEFAULT_MICROPHONE = "System Default"
-_VIRTUAL_DEVICE_PREFIXES = (
-    "default",
-    "sysdefault",
-    "front",
-    "surround",
-    "iec958",
-    "spdif",
-    "hdmi",
-    "dmix",
-    "dsnoop",
-    "pulse",
-    "pipewire",
-    "jack",
-    "samplerate",
-    "speex",
-    "upmix",
-    "vdownmix",
-)
 
 
 @dataclass(frozen=True)
@@ -61,10 +43,11 @@ def discover_input_microphones() -> tuple[list[MicrophoneOption], int | None]:
         for device_index in range(audio.get_device_count()):
             device = audio.get_device_info_by_index(device_index)
             device_name = str(device.get("name", f"Microphone {device_index}"))
-            if (
-                int(device.get("maxInputChannels", 0)) < 1
-                or _is_virtual_input(device_name)
-            ):
+            normalized_name = device_name.lower()
+            physical_linux_input = "(hw:" in normalized_name or "intel" in normalized_name
+            if int(device.get("maxInputChannels", 0)) < 1:
+                continue
+            if sys.platform.startswith("linux") and not physical_linux_input:
                 continue
             options.append(
                 MicrophoneOption(
@@ -83,8 +66,3 @@ def _get_default_input_index(audio: Any) -> int | None:
         return int(audio.get_default_input_device_info()["index"])
     except (KeyError, OSError):
         return None
-
-
-def _is_virtual_input(device_name: str) -> bool:
-    normalized = device_name.strip().lower()
-    return normalized.startswith(_VIRTUAL_DEVICE_PREFIXES)

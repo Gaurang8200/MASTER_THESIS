@@ -1596,9 +1596,7 @@ def refresh_microphones() -> None:
        }
    )
    mic_combo.configure(values=list(mic_mapping))
-   mic_var.set(
-       selected_name if selected_name in mic_mapping else no_microphone_name
-   )
+   mic_var.set(selected_name if selected_name in mic_mapping else no_microphone_name)
 
 mic_combo = ttk.Combobox(
    left_frame,
