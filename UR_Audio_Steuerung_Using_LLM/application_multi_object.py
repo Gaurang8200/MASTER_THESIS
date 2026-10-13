@@ -86,6 +86,8 @@ pending_command_info = None
 gesture_poll_job = None
 speech_runtime = None
 speech_runtime_lock = threading.Lock()
+auto_running = False
+auto_job = None
 
 # === WORKFLOW STATUS MANAGEMENT ===
 class WorkflowStatus:
@@ -111,6 +113,11 @@ def update_button_states() -> None:
    btn_record.config(state="normal" if detected_objects and camera_ready else "disabled")
    command_ready = bool(robot_methods and pending_command_info)
    btn_execute.config(state="normal" if command_ready and camera_ready else "disabled")
+   btn_auto_start.config(
+       state="normal" if detection_ready and camera_ready and not auto_running else "disabled"
+   )
+   btn_auto_stop.config(state="normal" if auto_running else "disabled")
+   workflow_mode_toggle.config(state="disabled" if auto_running else "normal")
 
 def update_robot_ip():
    robot_ip.set(get_default_robot_ip(robot_type.get()))
@@ -764,6 +771,7 @@ def _finish_recording():
        if prepared
        else WorkflowStatus.READY_FOR_COMMANDS
    )
+   _continue_auto_pipeline(prepared)
 
 
 def _poll_gesture_session():
@@ -771,7 +779,11 @@ def _poll_gesture_session():
    if not recording:
        return
    result = gesture_client.latest_result()
-   if result is not None and _gesture_result_is_fresh(result):
+   if (
+       result is not None and _gesture_result_is_fresh(result)
+   ) or (
+       auto_running and last_audio is not None
+   ):
        _finish_recording()
        return
    gesture_poll_job = app.after(200, _poll_gesture_session)
@@ -1185,6 +1197,100 @@ def execute_workflow_handler():
     finally:
         # Ensure buttons are re-enabled
         update_button_states()
+
+
+def _set_auto_running(value: bool) -> None:
+   global auto_running
+   auto_running = value
+   update_button_states()
+
+
+def _run_auto_detection() -> None:
+   global auto_job
+   auto_job = None
+   if not auto_running:
+       return
+   capture_and_detect_objects()
+   if not auto_running:
+       return
+   if not detected_objects:
+       _set_auto_running(False)
+       return
+   toggle_recording()
+   if not recording:
+       _set_auto_running(False)
+
+
+def _run_auto_execution() -> None:
+   global auto_job
+   auto_job = None
+   if not auto_running:
+       return
+   execute_workflow_handler()
+   _set_auto_running(False)
+
+
+def _continue_auto_pipeline(command_ready: bool) -> None:
+   global auto_job
+   if not auto_running:
+       return
+   if not command_ready:
+       _set_auto_running(False)
+       return
+   auto_job = app.after(100, _run_auto_execution)
+
+
+def start_auto_pipeline() -> None:
+   global auto_job
+   if auto_running:
+       return
+   _set_auto_running(True)
+   auto_job = app.after(0, _run_auto_detection)
+
+
+def stop_auto_pipeline() -> None:
+   global auto_job, recording, stop_listening, gesture_poll_job
+   global pending_command_info, selected_object
+   if auto_job is not None:
+       app.after_cancel(auto_job)
+       auto_job = None
+   _set_auto_running(False)
+   if gesture_poll_job is not None:
+       app.after_cancel(gesture_poll_job)
+       gesture_poll_job = None
+   if stop_listening is not None:
+       stop_listening(wait_for_stop=False)
+       stop_listening = None
+   if recording:
+       recording = False
+       btn_record.config(text="Start Recording")
+   gesture_client.cancel()
+   robot_methods.clear()
+   pending_command_info = None
+   selected_object = None
+   update_object_display()
+   update_workflow_status(
+       WorkflowStatus.READY_FOR_COMMANDS
+       if detected_objects
+       else WorkflowStatus.READY_FOR_DETECTION
+   )
+   output_text.insert(tk.END, "AUTO: Pipeline stopped.\n")
+
+
+def set_workflow_mode() -> None:
+   if auto_mode.get():
+       workflow_mode_text.set("Workflow Mode: Auto")
+       workflow_help.config(text="Auto: Detect → Voice Command → Execute")
+       manual_button_frame.pack_forget()
+       auto_button_frame.pack(fill=tk.X)
+   else:
+       workflow_mode_text.set("Workflow Mode: Manual")
+       workflow_help.config(
+           text=_tk_safe_text("1. Detect Objects → 2. Voice Command → 3. Execute")
+       )
+       auto_button_frame.pack_forget()
+       manual_button_frame.pack(fill=tk.X)
+   update_button_states()
 
 def write_object_data_for_robot(selected_obj):
     """
@@ -1659,8 +1765,21 @@ refresh_microphones()
 button_frame = ttk.LabelFrame(left_frame, text="Controls", padding="5")
 button_frame.pack(fill=tk.X, pady=(0,10))
 
-btn_detect = ttk.Button(
+auto_mode = tk.BooleanVar(app, value=False)
+workflow_mode_text = tk.StringVar(app, value="Workflow Mode: Manual")
+workflow_mode_toggle = ttk.Checkbutton(
    button_frame,
+   textvariable=workflow_mode_text,
+   variable=auto_mode,
+   command=set_workflow_mode,
+)
+workflow_mode_toggle.pack(anchor="w", pady=(0, 4))
+
+manual_button_frame = ttk.Frame(button_frame)
+manual_button_frame.pack(fill=tk.X)
+
+btn_detect = ttk.Button(
+   manual_button_frame,
    text="Capture & Detect Objects",
    command=capture_and_detect_objects,
    width=25
@@ -1668,7 +1787,7 @@ btn_detect = ttk.Button(
 btn_detect.pack(pady=2)
 
 btn_record = ttk.Button(
-   button_frame,
+   manual_button_frame,
    text="Start Recording",
    command=toggle_recording,
    width=25,
@@ -1677,13 +1796,31 @@ btn_record = ttk.Button(
 btn_record.pack(pady=2)
 
 btn_execute = ttk.Button(
-   button_frame,
+   manual_button_frame,
    text="Execute Robot Workflow",
    command=execute_workflow_handler,
    width=25,
    state="disabled"
 )
 btn_execute.pack(pady=2)
+
+auto_button_frame = ttk.Frame(button_frame)
+btn_auto_start = ttk.Button(
+   auto_button_frame,
+   text="Start Pipeline",
+   command=start_auto_pipeline,
+   width=25,
+)
+btn_auto_start.pack(pady=2)
+
+btn_auto_stop = ttk.Button(
+   auto_button_frame,
+   text="Stop Pipeline",
+   command=stop_auto_pipeline,
+   width=25,
+   state="disabled",
+)
+btn_auto_stop.pack(pady=2)
 
 # Right frame - Displays
 right_frame = ttk.Frame(main_frame)
