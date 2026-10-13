@@ -76,6 +76,7 @@ load_dotenv()
 recording         = False
 stop_listening    = None
 last_audio        = None
+last_audio_at     = None
 robot_methods     = []
 ie_instance       = None          # für OpenAI IE
 detected_objects  = []            # List of detected objects
@@ -396,7 +397,7 @@ def capture_and_detect_objects(preserve_command: bool = False) -> None:
            os.environ["ROBOT_TYPE"] = previous_robot_type
 
 def callback(recognizer, audio):
-   global last_audio
+   global last_audio, last_audio_at
    if last_audio is None:
        last_audio = audio
    else:
@@ -405,6 +406,7 @@ def callback(recognizer, audio):
            audio.sample_rate,
            audio.sample_width,
        )
+   last_audio_at = time.monotonic()
    print("Audio captured.")
 
 def _operator_feedback():
@@ -783,7 +785,10 @@ def _poll_gesture_session():
    if (
        result is not None and _gesture_result_is_fresh(result)
    ) or (
-       auto_running and last_audio is not None
+       auto_running
+       and last_audio is not None
+       and last_audio_at is not None
+       and time.monotonic() - last_audio_at >= 2.0
    ):
        _finish_recording()
        return
@@ -791,7 +796,7 @@ def _poll_gesture_session():
 
 
 def toggle_recording():
-   global recording, stop_listening, last_audio, gesture_start_error
+   global recording, stop_listening, last_audio, last_audio_at, gesture_start_error
    global selected_object, pending_command_info, gesture_poll_job
    if recording:
        _finish_recording()
@@ -810,6 +815,7 @@ def toggle_recording():
    selected_object = None
    pending_command_info = None
    last_audio = None
+   last_audio_at = None
    gesture_start_error = None
    update_object_display()
    gesture_outcome = {}
