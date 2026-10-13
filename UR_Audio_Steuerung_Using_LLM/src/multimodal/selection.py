@@ -68,10 +68,13 @@ class MultimodalResolution:
 
 
 def is_pointing_reference(text: str, extracted_info: dict[str, object]) -> bool:
-    if extracted_info.get("selection_mode") == "gesture":
-        return True
     normalized = " ".join(text.lower().split())
-    return any(re.search(pattern, normalized) for pattern in POINTING_PATTERNS)
+    if any(re.search(pattern, normalized) for pattern in POINTING_PATTERNS):
+        return True
+    return (
+        extracted_info.get("selection_mode") == "gesture"
+        and not extracted_info.get("object")
+    )
 
 
 def is_affirmative(text: str) -> bool:

@@ -634,6 +634,7 @@ def _prepare_command(text, gesture_result, gesture_was_fresh):
    else:
        info = ie_instance.extract(text, command_type.get())
        resolution_text = text
+       print("COMMAND EXTRACTION: " + json.dumps(info, ensure_ascii=False))
    detection_data = load_overview_detection_data()
    multimodal = resolve_multimodal_selection(
        resolution_text,
@@ -642,6 +643,7 @@ def _prepare_command(text, gesture_result, gesture_was_fresh):
        detection_data,
    )
    if multimodal.required and not multimodal.accepted:
+       print(f"COMMAND REJECTED: multimodal={multimodal.reason}")
        publish_multimodal_rejection(multimodal.reason)
        return False
    if multimodal.required and not gesture_was_fresh:
@@ -664,6 +666,10 @@ def _prepare_command(text, gesture_result, gesture_was_fresh):
    info["clarification_fields"] = clarification_fields
    info["needs_clarification"] = bool(clarification_fields)
    if handle_clarification_needed(info):
+       print(
+           "COMMAND REJECTED: clarification="
+           + json.dumps(info.get("clarification_fields", []), ensure_ascii=False)
+       )
        return False
    prepared_methods = select_robot_methods_multi(info, use_precision=True)
    if not prepared_methods:
@@ -726,6 +732,10 @@ def _finish_recording():
        print("MULTIMODAL: Gesture result " + json.dumps(gesture_result, ensure_ascii=False))
    else:
        print("MULTIMODAL: Keeping gesture camera open for speech depth")
+       try:
+           gesture_client.pause_inference()
+       except TimeoutError as error:
+           print(f"MULTIMODAL: {error}")
    text = ""
    if last_audio is not None:
        try:

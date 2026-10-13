@@ -240,6 +240,17 @@ def _render(
     return cv2.waitKey(1) & 0xFF
 
 
+def _render_paused(frame) -> int:
+    import cv2
+
+    from visualization import draw_hud
+
+    canvas = frame.copy()
+    draw_hud(canvas, ("speech gesture selection", "processing speech", "q cancel"), SelectionMode.ON)
+    cv2.imshow(WINDOW_NAME, canvas)
+    return cv2.waitKey(1) & 0xFF
+
+
 def _window_is_visible() -> bool:
     import cv2
 
@@ -305,6 +316,7 @@ def run_session(
     window_created = False
     last_pointing_at: float | None = None
     last_depth_error: str | None = None
+    inference_paused = False
 
     try:
         gesture.start()
@@ -334,8 +346,12 @@ def run_session(
                 command = request.get("command")
                 if command == "stop":
                     break
+                if command == "pause_inference":
+                    inference_paused = True
+                    display_reason = "processing speech"
                 if command == "select_speech_object":
                     target_class, target_bbox = _speech_target_request(request)
+                    inference_paused = False
                     selection_kind = "speech_depth"
                     selected = None
                     selection_complete = False
@@ -355,6 +371,16 @@ def run_session(
                 if camera.consecutive_failures >= 10:
                     result = _base_result(session_id, "error", "camera_read_failed")
                     break
+                continue
+
+            if inference_paused:
+                if display:
+                    key = _render_paused(frame)
+                    window_created = True
+                    if key == ord("q"):
+                        result = _base_result(session_id, "rejected", "operator_cancelled")
+                        break
+                frame_index += 1
                 continue
 
             frame_started = time.perf_counter()

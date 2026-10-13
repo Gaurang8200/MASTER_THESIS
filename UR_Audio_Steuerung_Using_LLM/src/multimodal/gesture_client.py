@@ -124,6 +124,17 @@ class GestureProcessClient:
             {"command": "select_speech_object", "class_name": class_name, "bbox": bbox},
         )
 
+    def pause_inference(self, wait_seconds: float = 2.0) -> None:
+        session = self._session
+        if not self.active or session is None:
+            return
+        self._write_request(session.request_file, {"command": "pause_inference"})
+        deadline = time.monotonic() + wait_seconds
+        while session.request_file.is_file() and self.active:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("gesture inference did not pause")
+            time.sleep(0.01)
+
     def latest_result(self) -> dict[str, object] | None:
         self._print_log_updates()
         session = self._session
