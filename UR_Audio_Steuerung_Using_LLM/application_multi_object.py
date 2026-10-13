@@ -109,7 +109,8 @@ def update_button_states() -> None:
    detection_ready = exec_mode.get() == "simulate" or camera_ready
    btn_detect.config(state="normal" if detection_ready else "disabled")
    btn_record.config(state="normal" if detected_objects and camera_ready else "disabled")
-   btn_execute.config(state="normal" if robot_methods and camera_ready else "disabled")
+   command_ready = bool(robot_methods and pending_command_info)
+   btn_execute.config(state="normal" if command_ready and camera_ready else "disabled")
 
 def update_robot_ip():
    robot_ip.set(get_default_robot_ip(robot_type.get()))
@@ -641,8 +642,8 @@ def _prepare_command(text, gesture_result, gesture_was_fresh):
    info["needs_clarification"] = bool(clarification_fields)
    if handle_clarification_needed(info):
        return False
-   robot_methods[:] = select_robot_methods_multi(info, use_precision=True)
-   if not robot_methods:
+   prepared_methods = select_robot_methods_multi(info, use_precision=True)
+   if not prepared_methods:
        return False
    _write_selection_data(info, gesture_result)
    output_text.insert(
@@ -650,16 +651,17 @@ def _prepare_command(text, gesture_result, gesture_was_fresh):
        "\nExtracted Information:\n"
        + json.dumps(info, indent=2, ensure_ascii=False)
        + "\n\nSelected Robot Methods:\n"
-       + "\n".join(robot_methods)
+       + "\n".join(prepared_methods)
        + "\n",
    )
-   pending_command_info = info
    if not _listen_for_confirmation(_confirmation_prompt(info)):
        robot_methods.clear()
        pending_command_info = None
        selected_object = None
        update_object_display()
        return False
+   robot_methods[:] = prepared_methods
+   pending_command_info = info
    update_command_history_display()
    save_command_history()
    return True
@@ -710,6 +712,7 @@ def _finish_recording():
    try:
        prepared = _prepare_command(text, gesture_result, gesture_was_fresh)
    except Exception as error:
+       print(f"COMMAND PREPARATION ERROR: {error}")
        output_text.insert(tk.END, f"Command preparation error: {error}\n")
        prepared = False
    update_workflow_status(
