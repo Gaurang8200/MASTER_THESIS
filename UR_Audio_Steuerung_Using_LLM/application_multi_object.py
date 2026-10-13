@@ -1595,18 +1595,17 @@ def refresh_microphones() -> None:
            for option in microphone_options
        }
    )
-   mic_combo.configure(values=list(mic_mapping))
-   mic_var.set(selected_name if selected_name in mic_mapping else no_microphone_name)
+   selected_name = selected_name if selected_name in mic_mapping else no_microphone_name
+   mic_menu.set_menu(selected_name, *mic_mapping)
 
-mic_combo = ttk.Combobox(
+mic_menu = ttk.OptionMenu(
    left_frame,
-   textvariable=mic_var,
-   values=list(mic_mapping),
-   state="readonly",
-   width=34,
-   postcommand=refresh_microphones,
+   mic_var,
+   no_microphone_name,
+   *mic_mapping,
 )
-mic_combo.pack(pady=(0,10))
+mic_menu["menu"].configure(postcommand=refresh_microphones)
+mic_menu.pack(pady=(0,10))
 refresh_microphones()
 
 # === ENHANCED BUTTONS WITH STATE MANAGEMENT ===
