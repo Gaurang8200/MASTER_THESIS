@@ -469,12 +469,12 @@ def _transcribe_audio(audio, filename):
 
 def _request_click_confirmation(prompt, reason):
    feedback = _operator_feedback()
-   feedback.publish("Speech confirmation was not recognized. Use the confirmation window.")
+   feedback.publish("Use the confirmation window to approve or cancel the robot action.")
    approved = messagebox.askyesno(
        "Robot Confirmation",
        _tk_safe_text(
            f"{prompt}\n\n"
-           f"Speech confirmation status: {reason}\n\n"
+           f"Confirmation status: {reason}\n\n"
            "Click Yes to approve this robot action or No to cancel."
        ),
        parent=app,
@@ -734,12 +734,7 @@ def _prepare_command(text, gesture_result, gesture_was_fresh):
        + "\n",
    )
    prompt = _confirmation_prompt(info)
-   confirmed = (
-       _request_click_confirmation(prompt, "gesture-only selection")
-       if gesture_only
-       else _listen_for_confirmation(prompt)
-   )
-   if not confirmed:
+   if not _request_click_confirmation(prompt, "command ready"):
        robot_methods.clear()
        pending_command_info = None
        selected_object = None
