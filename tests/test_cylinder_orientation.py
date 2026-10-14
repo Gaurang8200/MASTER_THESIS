@@ -27,9 +27,10 @@ from src.camera_devices import RgbCameraStream
 FRAME_SIZE = (1280, 720)
 YOLO_ROOT = AUDIO_ROOT / "Code-YOLOv5-Windows_llm" / "yolov5"
 STABLE_ANGLE_FRAMES = 7
+SUPPORTED_CLASSES = ("cylinder", "box", "marker")
 
 
-def estimate_cylinder_angle(
+def estimate_object_angle(
     crop: np.ndarray,
 ) -> tuple[
     float,
@@ -39,7 +40,7 @@ def estimate_cylinder_angle(
     float,
 ]:
     if crop.size == 0:
-        raise ValueError("cylinder crop is empty")
+        raise ValueError("object crop is empty")
     saturation = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1]
     saturation = cv2.GaussianBlur(saturation, (5, 5), 0)
     _, mask = cv2.threshold(
@@ -50,20 +51,20 @@ def estimate_cylinder_angle(
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
-        raise ValueError("cylinder contour is unavailable")
+        raise ValueError("object contour is unavailable")
     contour = max(contours, key=cv2.contourArea)
     if cv2.contourArea(contour) < crop.shape[0] * crop.shape[1] * 0.05:
-        raise ValueError("cylinder contour is too small")
-    cylinder_mask = np.zeros_like(mask)
-    cv2.drawContours(cylinder_mask, [contour], -1, 255, cv2.FILLED)
-    point_y, point_x = np.nonzero(cylinder_mask)
+        raise ValueError("object contour is too small")
+    object_mask = np.zeros_like(mask)
+    cv2.drawContours(object_mask, [contour], -1, 255, cv2.FILLED)
+    point_y, point_x = np.nonzero(object_mask)
     points = np.column_stack((point_x, point_y)).astype(np.float64)
     mean, eigenvectors, eigenvalues = cv2.PCACompute2(points, mean=None)
     if eigenvalues[1, 0] <= 0.0:
-        raise ValueError("cylinder PCA has no minor axis")
+        raise ValueError("object PCA has no minor axis")
     elongation = float(eigenvalues[0, 0] / eigenvalues[1, 0])
     if elongation < 1.5:
-        raise ValueError("cylinder is not elongated enough for a stable 2D angle")
+        raise ValueError("object is not elongated enough for a stable 2D angle")
     axis_x, axis_y = eigenvectors[0]
     if axis_x < 0.0:
         axis_x, axis_y = -axis_x, -axis_y
@@ -133,10 +134,11 @@ def create_robot() -> FrankaRobotArm:
 def rotate_gripper_about_z(
     robot: FrankaRobotArm,
     start_pose: CartesianPose,
-    cylinder_angle_degrees: float,
+    object_name: str,
+    object_angle_degrees: float,
 ) -> None:
     current_pose = robot.current_pose()
-    rotation_degrees = cylinder_angle_degrees + 90.0
+    rotation_degrees = object_angle_degrees + 90.0
     target_quaternion = quaternion_multiply(
         z_rotation_quaternion(rotation_degrees),
         start_pose.quaternion,
@@ -146,7 +148,8 @@ def rotate_gripper_about_z(
         target_quaternion,
     )
     print(
-        f"ROBOT: Cylinder={cylinder_angle_degrees:+.2f} deg, perpendicular offset=+90.00 deg, "
+        f"ROBOT: {object_name}={object_angle_degrees:+.2f} deg, "
+        f"perpendicular offset=+90.00 deg, "
         f"target Z yaw={quaternion_yaw_degrees(target_pose.quaternion):+.2f} deg at fixed "
         f"XYZ={tuple(round(value, 2) for value in current_pose.translation)} mm"
     )
@@ -186,31 +189,45 @@ def main() -> None:
         )
         detector.start()
         camera.start()
-        print("Cylinder orientation test: R rotates, O restores the start angle, Q quits.")
-        angle_history: deque[float] = deque(maxlen=STABLE_ANGLE_FRAMES)
-        geometry_history: deque[tuple[float, ...]] = deque(
-            maxlen=STABLE_ANGLE_FRAMES
-        )
+        print("Object orientation test: R rotates, O restores the start angle, Q quits.")
+        angle_histories = {
+            name: deque(maxlen=STABLE_ANGLE_FRAMES) for name in SUPPORTED_CLASSES
+        }
+        geometry_histories = {
+            name: deque(maxlen=STABLE_ANGLE_FRAMES) for name in SUPPORTED_CLASSES
+        }
         while True:
             frame = camera.read()
             if frame is None:
                 continue
             display = frame.copy()
-            measured_angle = None
-            cylinders = [
+            stable_targets = []
+            objects = [
                 detected
                 for detected in detector.get_objects(frame)
-                if detected.class_name.lower() == "cylinder"
+                if detected.class_name.lower() in SUPPORTED_CLASSES
             ]
-            if len(cylinders) != 1:
-                angle_history.clear()
-                geometry_history.clear()
-            for detected in cylinders[:1]:
+            class_counts = {
+                name: sum(
+                    detected.class_name.lower() == name for detected in objects
+                )
+                for name in SUPPORTED_CLASSES
+            }
+            for name in SUPPORTED_CLASSES:
+                if class_counts[name] != 1:
+                    angle_histories[name].clear()
+                    geometry_histories[name].clear()
+            for detected in objects:
+                object_name = detected.class_name
+                class_name = object_name.lower()
                 x1, y1, x2, y2 = detected.box.as_int_tuple()
+                if class_counts[class_name] != 1:
+                    cv2.rectangle(display, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                    continue
                 crop = frame[y1:y2, x1:x2]
                 try:
                     angle, local_center, local_tail, local_nose, elongation = (
-                        estimate_cylinder_angle(crop)
+                        estimate_object_angle(crop)
                     )
                 except ValueError as error:
                     cv2.putText(
@@ -223,9 +240,11 @@ def main() -> None:
                         2,
                         cv2.LINE_AA,
                     )
-                    angle_history.clear()
-                    geometry_history.clear()
+                    angle_histories[class_name].clear()
+                    geometry_histories[class_name].clear()
                     continue
+                angle_history = angle_histories[class_name]
+                geometry_history = geometry_histories[class_name]
                 angle_history.append(angle)
                 geometry_history.append(
                     (
@@ -237,8 +256,10 @@ def main() -> None:
                         y1 + local_nose[1],
                     )
                 )
+                measured_angle = None
                 if len(angle_history) == STABLE_ANGLE_FRAMES:
                     measured_angle = stable_axis_angle_degrees(angle_history)
+                    stable_targets.append((object_name, measured_angle))
                 geometry = np.mean(np.asarray(geometry_history), axis=0)
                 center = (int(round(geometry[0])), int(round(geometry[1])))
                 start = (int(round(geometry[2])), int(round(geometry[3])))
@@ -250,7 +271,8 @@ def main() -> None:
                 cv2.circle(display, center, 5, (255, 0, 255), -1)
                 cv2.putText(
                     display,
-                    f"PCA {display_angle:+.1f} deg  target offset {display_angle + 90.0:+.1f} deg  ratio {elongation:.1f}",
+                    f"{object_name} PCA {display_angle:+.1f} deg  "
+                    f"target {display_angle + 90.0:+.1f} deg  ratio {elongation:.1f}",
                     (x1, max(25, y1 - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
@@ -268,23 +290,28 @@ def main() -> None:
                 2,
                 cv2.LINE_AA,
             )
-            cv2.imshow("Cylinder 2D PCA orientation", display)
+            cv2.imshow("Three object 2D PCA orientation", display)
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord("q")):
                 break
             if key in (ord("r"), ord("R")):
-                if measured_angle is None:
-                    print("ROBOT: Rotation skipped until seven valid angle frames are available")
+                if len(stable_targets) != 1:
+                    print(
+                        "ROBOT: Rotation requires exactly one stable Cylinder, Box, or Marker"
+                    )
                     continue
                 try:
-                    rotate_gripper_about_z(robot, start_pose, measured_angle)
+                    object_name, measured_angle = stable_targets[0]
+                    rotate_gripper_about_z(
+                        robot, start_pose, object_name, measured_angle
+                    )
                 except Exception as error:
                     print(f"ROBOT: Z-axis rotation failed: {error}")
             if key in (ord("o"), ord("O")):
                 try:
                     restore_start_orientation(robot, start_pose)
-                    angle_history.clear()
-                    geometry_history.clear()
+                    for history in (*angle_histories.values(), *geometry_histories.values()):
+                        history.clear()
                 except Exception as error:
                     print(f"ROBOT: Original orientation restore failed: {error}")
     finally:
