@@ -59,14 +59,10 @@ from src.camera_devices import apply_camera_environment, discover_oak_cameras
 from src.detection_preparation import get_default_robot_ip, prepare_robot_for_detection
 from src.yolo_detection_runtime import warm_yolo_detection
 from src.robot_method_selector_multi import select_robot_methods_multi, select_target_object
-from src.zone_coordinates import get_zone_coordinates
 from src.multimodal import (
    GestureProcessClient,
    OperatorFeedback,
    extract_zone,
-   is_affirmative,
-   is_drop_here,
-   is_negative,
    resolve_multimodal_selection,
 )
 
@@ -488,38 +484,6 @@ def _request_click_confirmation(prompt, reason):
    return False
 
 
-def _listen_for_confirmation(prompt):
-   feedback = _operator_feedback()
-   idx = mic_mapping.get(mic_var.get())
-   if idx is None:
-       return _request_click_confirmation(prompt, "microphone unavailable")
-   attempts = ((prompt, 10.0), ("Please answer yes or no.", 5.0))
-   for attempt_prompt, timeout_seconds in attempts:
-       feedback.publish(attempt_prompt, wait_for_speech=True)
-       recognizer = sr.Recognizer()
-       try:
-           with sr.Microphone(device_index=idx) as source:
-               audio = recognizer.listen(
-                   source,
-                   timeout=timeout_seconds,
-                   phrase_time_limit=3.0,
-               )
-           answer = _transcribe_audio(audio, "confirmation.wav")
-           print(f"MULTIMODAL CONFIRMATION: {answer}")
-       except sr.WaitTimeoutError:
-           continue
-       except Exception as error:
-           feedback.publish(f"Confirmation could not be captured. {error}")
-           return _request_click_confirmation(prompt, "microphone capture failed")
-       if is_affirmative(answer):
-           feedback.publish("Command confirmed.")
-           return True
-       if is_negative(answer):
-           feedback.publish("Command cancelled.")
-           return False
-   return _request_click_confirmation(prompt, "spoken answer not recognized")
-
-
 def _measure_speech_object_depth(target_object):
    message = "Speech object selected. Keep your hand clear while depth is measured."
    print(f"OAK D SPEECH DEPTH: {message}")
@@ -912,143 +876,76 @@ def toggle_recording():
    gesture_poll_job = app.after(200, _poll_gesture_session)
 
 
-def _transform_destination_point(gesture_result):
-   fingertip = gesture_result.get("fingertip_pixel")
-   frame_width = int(gesture_result.get("frame_width") or 0)
-   frame_height = int(gesture_result.get("frame_height") or 0)
-   if not isinstance(fingertip, list) or len(fingertip) != 2:
-       raise ValueError("Destination fingertip pixel is missing")
-   if frame_width <= 0 or frame_height <= 0:
-       raise ValueError("Destination camera size is missing")
-   pixel_x, pixel_y = float(fingertip[0]), float(fingertip[1])
-   if robot_type.get() == "franka":
-       from src.FR_franka import transform_franka_left_mono_pixel_to_robot
+def _request_zone_selection() -> str | None:
+   selected_zone = None
+   dialog = tk.Toplevel(app)
+   dialog.title("Select Target Zone")
+   dialog.transient(app)
+   dialog.grab_set()
+   ttk.Label(dialog, text="Where should the object be placed?").pack(padx=24, pady=16)
 
-       left_pixel = gesture_result.get("left_mono_pixel")
-       left_width = int(gesture_result.get("left_mono_frame_width") or 0)
-       left_height = int(gesture_result.get("left_mono_frame_height") or 0)
-       if not isinstance(left_pixel, list) or len(left_pixel) != 2:
-           mapping_error = gesture_result.get(
-               "left_mono_mapping_error",
-               "left mono fingertip pixel is missing",
-           )
-           raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
-       if left_width <= 0 or left_height <= 0:
-           raise ValueError("Left mono camera size is missing")
-       left_x, left_y = float(left_pixel[0]), float(left_pixel[1])
-       point = transform_franka_left_mono_pixel_to_robot(
-           left_x,
-           left_y,
-           left_width,
-           left_height,
-       )
-       print(
-           "FRANKA DESTINATION TRANSFORM: "
-           f"rgb_u={pixel_x:.1f}, rgb_v={pixel_y:.1f}, "
-           f"left_u={left_x:.1f}, left_v={left_y:.1f}, "
-           f"depth={float(gesture_result.get('fingertip_depth_mm') or 0.0):.1f} mm, "
-           f"x={point.x:.2f} mm, y={point.y:.2f} mm"
-       )
-       return point.x, point.y
-   detection_data = load_overview_detection_data()
-   metadata = detection_data.get("metadata", {})
-   target_width = int(metadata.get("image_width") or frame_width)
-   target_height = int(metadata.get("image_height") or frame_height)
-   calibrated_u = pixel_x * target_width / frame_width
-   calibrated_v = pixel_y * target_height / frame_height
-   from src.robot_control import transform_ur_pixel_to_robot
+   def select(zone):
+       nonlocal selected_zone
+       selected_zone = zone
+       dialog.destroy()
 
-   x_robot, y_robot = transform_ur_pixel_to_robot(calibrated_u, calibrated_v)
-   print(
-       "UR DESTINATION TRANSFORM: "
-       f"u={calibrated_u:.1f}, v={calibrated_v:.1f}, "
-       f"x={x_robot:.5f}, y={y_robot:.5f}"
-   )
-   return x_robot, y_robot
+   buttons = ttk.Frame(dialog)
+   buttons.pack(padx=16, pady=(0, 16))
+   for number in range(1, 4):
+       zone = f"Zone_{number}"
+       ttk.Button(
+           buttons,
+           text=f"Zone {number}",
+           command=lambda value=zone: select(value),
+       ).pack(side=tk.LEFT, padx=6)
+   app.wait_window(dialog)
+   return selected_zone
 
 
-def _collect_destination_methods():
-   from src.robot_method_selector_multi import (
-       build_precision_place_methods,
-       build_precision_point_place_methods,
-   )
+def _collect_destination_methods() -> list[str]:
+   from src.robot_method_selector_multi import build_precision_place_methods
 
-   feedback = _operator_feedback()
+   chosen_zone = None
    idx = mic_mapping.get(mic_var.get())
-   destination_audio = []
-
-   def destination_callback(recognizer, audio):
-       destination_audio.append(audio)
-       print("MULTIMODAL DESTINATION: Audio captured")
-
-   while True:
-       destination_audio.clear()
-       session = gesture_client.start(selection_kind="location", hold_seconds=3.0)
-       print(f"MULTIMODAL DESTINATION: Gesture session {session.session_id}")
-       stop_destination_audio = None
-       if idx is not None:
-           try:
-               recognizer = sr.Recognizer()
-               microphone = sr.Microphone(device_index=idx)
-               with microphone as source:
-                   recognizer.adjust_for_ambient_noise(source, duration=0.5)
-               stop_destination_audio = recognizer.listen_in_background(
-                   microphone,
-                   destination_callback,
-                   phrase_time_limit=5,
-               )
-           except Exception as error:
-               print(f"MICROPHONE: Destination audio unavailable. {error}")
-       reminder_at = time.monotonic() + 120.0
-       chosen_zone = None
-       chosen_point = None
+   if idx is not None:
        try:
-           while chosen_zone is None and chosen_point is None:
-               app.update()
-               gesture_result = gesture_client.latest_result()
-               if gesture_result is not None and not _gesture_result_is_fresh(gesture_result):
-                   gesture_result = None
-               if destination_audio:
-                   audio = destination_audio.pop(0)
+           recognizer = sr.Recognizer()
+           microphone = sr.Microphone(device_index=idx)
+           with microphone as source:
+               recognizer.adjust_for_ambient_noise(source, duration=0.5)
+               _operator_feedback().publish(
+                   "Say zone 1, zone 2, or zone 3.",
+                   wait_for_speech=True,
+               )
+               for attempt in range(1, 11):
                    try:
-                       text = _transcribe_audio(audio, "destination.wav")
-                   except Exception as error:
-                       print(f"MULTIMODAL DESTINATION: Transcription failed. {error}")
+                       audio = recognizer.listen(source, timeout=3.0, phrase_time_limit=3.0)
+                   except sr.WaitTimeoutError:
                        text = ""
-                   print(f"MULTIMODAL DESTINATION SPEECH: {text}")
-                   chosen_zone = extract_zone(text)
-                   if chosen_zone is None and is_drop_here(text):
-                       if gesture_result is None:
-                           feedback.publish("Point at the destination and say drop here again.")
-                       else:
-                           chosen_point = gesture_result
-               if (
-                   chosen_zone is None
-                   and chosen_point is None
-                   and gesture_result is not None
-               ):
-                   chosen_point = gesture_result
-               if time.monotonic() >= reminder_at:
-                   feedback.publish(
-                       "Would you like to drop the object? Point at a place or say which zone."
+                   except Exception as error:
+                       print(f"MICROPHONE: Destination audio unavailable. {error}")
+                       break
+                   else:
+                       try:
+                           text = _transcribe_audio(audio, "destination.wav")
+                       except Exception as error:
+                           print(f"MULTIMODAL DESTINATION: Transcription failed. {error}")
+                           text = ""
+                   print(
+                       f"MULTIMODAL DESTINATION SPEECH: attempt={attempt}/10, "
+                       f"text={text!r}"
                    )
-                   reminder_at = time.monotonic() + 120.0
-               time.sleep(0.1)
-       finally:
-           if stop_destination_audio is not None:
-               stop_destination_audio(wait_for_stop=True)
-           gesture_client.finish()
-       if chosen_zone is not None:
-           prompt = f"Do you want me to place the object in {chosen_zone.replace('_', ' ')}?"
-           if _listen_for_confirmation(prompt):
-               return build_precision_place_methods(chosen_zone)
-           feedback.publish("Destination cancelled. Please choose again.")
-           continue
-       if chosen_point is not None:
-           if _listen_for_confirmation("Do you want me to drop the object there?"):
-               x_robot, y_robot = _transform_destination_point(chosen_point)
-               return build_precision_point_place_methods(x_robot, y_robot)
-           feedback.publish("Destination cancelled. Please point or speak again.")
+                   chosen_zone = extract_zone(text)
+                   if chosen_zone is not None:
+                       break
+       except Exception as error:
+           print(f"MICROPHONE: Destination input unavailable. {error}")
+   if chosen_zone is None:
+       chosen_zone = _request_zone_selection()
+   if chosen_zone is None:
+       raise RuntimeError("Destination selection cancelled while the robot holds the object")
+   print(f"MULTIMODAL DESTINATION: Selected {chosen_zone}")
+   return build_precision_place_methods(chosen_zone)
 
 def execute_workflow_handler():
     global detected_objects, selected_object, pending_command_info
