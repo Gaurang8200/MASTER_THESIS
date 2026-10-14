@@ -17,6 +17,9 @@ for folder in (AUDIO_ROOT, PIPELINE_ROOT / "support", PIPELINE_ROOT / "detection
 
 from config import ObjectModelConfig, resolve_device
 from object_detector import Yolov5ObjectDetector
+from src.FR_franka.FR_config import load_franka_config
+from src.FR_franka.FR_models import CartesianPose
+from src.FR_franka.FR_robot import FrankaRobotArm
 from src.camera_devices import RgbCameraStream
 
 
@@ -56,6 +59,32 @@ def downward_gripper_quaternion(yaw_degrees: float) -> tuple[float, float, float
     return math.cos(half_yaw), math.sin(half_yaw), 0.0, 0.0
 
 
+def create_robot() -> FrankaRobotArm:
+    config = load_franka_config()
+    robot = FrankaRobotArm(
+        config.robot_ip,
+        config.dynamics_factor,
+        config.gripper_speed_mm_s,
+        config.gripper_force,
+    )
+    robot.start()
+    return robot
+
+
+def rotate_gripper_about_z(robot: FrankaRobotArm, yaw_degrees: float) -> None:
+    current_pose = robot.current_pose()
+    target_pose = CartesianPose.create(
+        current_pose.translation,
+        downward_gripper_quaternion(yaw_degrees),
+    )
+    print(
+        f"ROBOT: Rotating gripper to Z yaw={yaw_degrees:+.2f} deg at fixed "
+        f"XYZ={tuple(round(value, 2) for value in current_pose.translation)} mm"
+    )
+    robot.move_pose(target_pose)
+    print("ROBOT: Z-axis rotation complete")
+
+
 def main() -> None:
     model_config = ObjectModelConfig(
         repo_path=str(YOLO_ROOT),
@@ -69,15 +98,17 @@ def main() -> None:
         confidence=0.25,
     )
     camera = RgbCameraStream(*FRAME_SIZE, color_only=True)
+    robot = None
     try:
         detector.start()
         camera.start()
-        print("Cylinder orientation test: X, Y and Z stay fixed. Only gripper Z yaw changes.")
+        print("Cylinder orientation test: press R to rotate the gripper, Q to quit.")
         while True:
             frame = camera.read()
             if frame is None:
                 continue
             display = frame.copy()
+            measured_angle = None
             for detected in detector.get_objects(frame):
                 if detected.class_name.lower() != "cylinder":
                     continue
@@ -97,6 +128,7 @@ def main() -> None:
                         cv2.LINE_AA,
                     )
                     continue
+                measured_angle = angle
                 center = (
                     int(round(x1 + local_center[0])),
                     int(round(y1 + local_center[1])),
@@ -127,13 +159,36 @@ def main() -> None:
                     f"PCA angle={angle:+.2f} deg, gripper Z yaw={angle:+.2f} deg, "
                     f"XYZ unchanged, quaternion={tuple(round(value, 5) for value in quaternion)}"
                 )
+            cv2.putText(
+                display,
+                "R: rotate gripper   Q: quit",
+                (20, 35),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
             cv2.imshow("Cylinder 2D PCA orientation", display)
-            if cv2.waitKey(1) & 0xFF in (27, ord("q")):
+            key = cv2.waitKey(1) & 0xFF
+            if key in (27, ord("q")):
                 break
+            if key == ord("r"):
+                if measured_angle is None:
+                    print("ROBOT: Rotation skipped because no valid cylinder angle is visible")
+                    continue
+                try:
+                    if robot is None:
+                        robot = create_robot()
+                    rotate_gripper_about_z(robot, measured_angle)
+                except Exception as error:
+                    print(f"ROBOT: Z-axis rotation failed: {error}")
     finally:
         cv2.destroyAllWindows()
         detector.close()
         camera.close()
+        if robot is not None:
+            robot.close()
 
 
 if __name__ == "__main__":
