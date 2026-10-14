@@ -733,7 +733,13 @@ def _prepare_command(text, gesture_result, gesture_was_fresh):
        + "\n".join(prepared_methods)
        + "\n",
    )
-   if not _listen_for_confirmation(_confirmation_prompt(info)):
+   prompt = _confirmation_prompt(info)
+   confirmed = (
+       _request_click_confirmation(prompt, "gesture-only selection")
+       if gesture_only
+       else _listen_for_confirmation(prompt)
+   )
+   if not confirmed:
        robot_methods.clear()
        pending_command_info = None
        selected_object = None
@@ -762,7 +768,7 @@ def _finish_recording():
        app.after_cancel(gesture_poll_job)
        gesture_poll_job = None
    if stop_listening:
-       stop_listening(wait_for_stop=True)
+       stop_listening(wait_for_stop=not gesture_was_fresh)
        stop_listening = None
    btn_record.config(text="Start Recording")
    gesture_result = live_gesture_result or {
