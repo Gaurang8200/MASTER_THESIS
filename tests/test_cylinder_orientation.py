@@ -29,14 +29,25 @@ YOLO_ROOT = AUDIO_ROOT / "Code-YOLOv5-Windows_llm" / "yolov5"
 STABLE_ANGLE_FRAMES = 7
 
 
-def estimate_cylinder_angle(crop: np.ndarray) -> tuple[float, tuple[float, float], float]:
+def estimate_cylinder_angle(
+    crop: np.ndarray,
+) -> tuple[
+    float,
+    tuple[float, float],
+    tuple[float, float],
+    tuple[float, float],
+    float,
+]:
     if crop.size == 0:
         raise ValueError("cylinder crop is empty")
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    kernel = np.ones((3, 3), dtype=np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+    saturation = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1]
+    saturation = cv2.GaussianBlur(saturation, (5, 5), 0)
+    _, mask = cv2.threshold(
+        saturation, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    kernel = np.ones((5, 5), dtype=np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         raise ValueError("cylinder contour is unavailable")
@@ -57,7 +68,17 @@ def estimate_cylinder_angle(crop: np.ndarray) -> tuple[float, tuple[float, float
     if axis_x < 0.0:
         axis_x, axis_y = -axis_x, -axis_y
     angle_degrees = math.degrees(math.atan2(-axis_y, axis_x))
-    return angle_degrees, (float(mean[0, 0]), float(mean[0, 1])), elongation
+    center = mean[0]
+    projections = (points - center) @ np.array((axis_x, axis_y))
+    tail = center + projections.min() * np.array((axis_x, axis_y))
+    nose = center + projections.max() * np.array((axis_x, axis_y))
+    return (
+        angle_degrees,
+        (float(center[0]), float(center[1])),
+        (float(tail[0]), float(tail[1])),
+        (float(nose[0]), float(nose[1])),
+        elongation,
+    )
 
 
 def stable_axis_angle_degrees(angles: deque[float]) -> float:
@@ -167,6 +188,9 @@ def main() -> None:
         camera.start()
         print("Cylinder orientation test: R rotates, O restores the start angle, Q quits.")
         angle_history: deque[float] = deque(maxlen=STABLE_ANGLE_FRAMES)
+        geometry_history: deque[tuple[float, ...]] = deque(
+            maxlen=STABLE_ANGLE_FRAMES
+        )
         while True:
             frame = camera.read()
             if frame is None:
@@ -180,11 +204,14 @@ def main() -> None:
             ]
             if len(cylinders) != 1:
                 angle_history.clear()
+                geometry_history.clear()
             for detected in cylinders[:1]:
                 x1, y1, x2, y2 = detected.box.as_int_tuple()
                 crop = frame[y1:y2, x1:x2]
                 try:
-                    angle, local_center, elongation = estimate_cylinder_angle(crop)
+                    angle, local_center, local_tail, local_nose, elongation = (
+                        estimate_cylinder_angle(crop)
+                    )
                 except ValueError as error:
                     cv2.putText(
                         display,
@@ -197,23 +224,26 @@ def main() -> None:
                         cv2.LINE_AA,
                     )
                     angle_history.clear()
+                    geometry_history.clear()
                     continue
                 angle_history.append(angle)
+                geometry_history.append(
+                    (
+                        x1 + local_center[0],
+                        y1 + local_center[1],
+                        x1 + local_tail[0],
+                        y1 + local_tail[1],
+                        x1 + local_nose[0],
+                        y1 + local_nose[1],
+                    )
+                )
                 if len(angle_history) == STABLE_ANGLE_FRAMES:
                     measured_angle = stable_axis_angle_degrees(angle_history)
-                center = (
-                    int(round(x1 + local_center[0])),
-                    int(round(y1 + local_center[1])),
-                )
+                geometry = np.mean(np.asarray(geometry_history), axis=0)
+                center = (int(round(geometry[0])), int(round(geometry[1])))
+                start = (int(round(geometry[2])), int(round(geometry[3])))
+                end = (int(round(geometry[4])), int(round(geometry[5])))
                 display_angle = measured_angle if measured_angle is not None else angle
-                radians = math.radians(display_angle)
-                axis_length = max(30, int(0.4 * max(x2 - x1, y2 - y1)))
-                delta = (
-                    int(round(axis_length * math.cos(radians))),
-                    int(round(-axis_length * math.sin(radians))),
-                )
-                start = (center[0] - delta[0], center[1] - delta[1])
-                end = (center[0] + delta[0], center[1] + delta[1])
                 cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.line(display, start, end, (0, 255, 255), 3, cv2.LINE_AA)
                 cv2.arrowedLine(display, center, end, (255, 255, 0), 3, cv2.LINE_AA)
@@ -254,6 +284,7 @@ def main() -> None:
                 try:
                     restore_start_orientation(robot, start_pose)
                     angle_history.clear()
+                    geometry_history.clear()
                 except Exception as error:
                     print(f"ROBOT: Original orientation restore failed: {error}")
     finally:
