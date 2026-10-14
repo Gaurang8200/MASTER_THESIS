@@ -409,6 +409,46 @@ def callback(recognizer, audio):
    last_audio_at = time.monotonic()
    print("Audio captured.")
 
+
+def _start_audio_listener(device_index):
+   if device_index is None:
+       return None
+   print(f"MICROPHONE: Starting selected input index {device_index}")
+   recognizer = sr.Recognizer()
+   microphone = sr.Microphone(device_index=device_index)
+   with microphone as source:
+       recognizer.adjust_for_ambient_noise(source, duration=1)
+   return recognizer.listen_in_background(
+       microphone,
+       callback,
+       phrase_time_limit=5,
+   )
+
+
+def _resume_auto_capture():
+   global recording, stop_listening, last_audio, last_audio_at, gesture_poll_job
+   last_audio = None
+   last_audio_at = None
+   try:
+       gesture_client.resume_inference()
+   except TimeoutError as error:
+       print(f"MULTIMODAL: {error}")
+       gesture_client.cancel()
+       _set_auto_running(False)
+       update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
+       return
+   try:
+       stop_listening = _start_audio_listener(mic_mapping.get(mic_var.get()))
+   except Exception as error:
+       stop_listening = None
+       print(f"MICROPHONE: Input unavailable. Continuing with gesture only. {error}")
+   recording = True
+   btn_record.config(text="Stop Recording")
+   update_workflow_status(WorkflowStatus.PROCESSING)
+   output_text.insert(tk.END, "AUTO: No speech recognized. Listening again.\n")
+   gesture_poll_job = app.after(200, _poll_gesture_session)
+
+
 def _operator_feedback():
    return OperatorFeedback(
        lambda message: (
@@ -760,6 +800,9 @@ def _finish_recording():
        output_text.insert(tk.END, "No speech or stable gesture was captured.\n")
        update_workflow_status(WorkflowStatus.READY_FOR_COMMANDS)
        return
+   if auto_running and not text.strip() and not gesture_was_fresh:
+       _resume_auto_capture()
+       return
    try:
        prepared = _prepare_command(text, gesture_result, gesture_was_fresh)
    except Exception as error:
@@ -853,20 +896,10 @@ def toggle_recording():
    print(f"MULTIMODAL: Gesture capture is running for session {session.session_id}")
 
    stop_listening = None
-   if idx is not None:
-       try:
-           print(f"MICROPHONE: Starting selected input index {idx}")
-           recognizer = sr.Recognizer()
-           microphone = sr.Microphone(device_index=idx)
-           with microphone as source:
-               recognizer.adjust_for_ambient_noise(source, duration=1)
-           stop_listening = recognizer.listen_in_background(
-               microphone,
-               callback,
-               phrase_time_limit=5,
-           )
-       except Exception as error:
-           print(f"MICROPHONE: Input unavailable. Continuing without audio. {error}")
+   try:
+       stop_listening = _start_audio_listener(idx)
+   except Exception as error:
+       print(f"MICROPHONE: Input unavailable. Continuing without audio. {error}")
    recording = True
    btn_record.config(text="Stop Recording")
    update_workflow_status(WorkflowStatus.PROCESSING)

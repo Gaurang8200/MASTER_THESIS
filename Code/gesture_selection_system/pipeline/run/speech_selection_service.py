@@ -349,6 +349,9 @@ def run_session(
                 if command == "pause_inference":
                     inference_paused = True
                     display_reason = "processing speech"
+                if command == "resume_inference":
+                    inference_paused = False
+                    display_reason = "waiting for speech or gesture"
                 if command == "select_speech_object":
                     target_class, target_bbox = _speech_target_request(request)
                     inference_paused = False

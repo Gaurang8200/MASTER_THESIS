@@ -125,14 +125,20 @@ class GestureProcessClient:
         )
 
     def pause_inference(self, wait_seconds: float = 2.0) -> None:
+        self._set_inference_state("pause_inference", wait_seconds)
+
+    def resume_inference(self, wait_seconds: float = 2.0) -> None:
+        self._set_inference_state("resume_inference", wait_seconds)
+
+    def _set_inference_state(self, command: str, wait_seconds: float) -> None:
         session = self._session
         if not self.active or session is None:
             return
-        self._write_request(session.request_file, {"command": "pause_inference"})
+        self._write_request(session.request_file, {"command": command})
         deadline = time.monotonic() + wait_seconds
         while session.request_file.is_file() and self.active:
             if time.monotonic() >= deadline:
-                raise TimeoutError("gesture inference did not pause")
+                raise TimeoutError(f"gesture inference command timed out: {command}")
             time.sleep(0.01)
 
     def latest_result(self) -> dict[str, object] | None:
