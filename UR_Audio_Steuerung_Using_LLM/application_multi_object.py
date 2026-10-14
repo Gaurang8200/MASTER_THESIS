@@ -779,7 +779,10 @@ def _finish_recording():
        }
    elif gesture_was_fresh or last_audio is None:
        gesture_result = gesture_client.finish()
-       gesture_was_fresh = _gesture_result_is_fresh(gesture_result)
+       if gesture_was_fresh:
+           gesture_result = live_gesture_result
+       else:
+           gesture_was_fresh = _gesture_result_is_fresh(gesture_result)
        print("MULTIMODAL: Gesture result " + json.dumps(gesture_result, ensure_ascii=False))
    else:
        print("MULTIMODAL: Keeping gesture camera open for speech depth")
