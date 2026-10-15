@@ -31,11 +31,16 @@ from fingertip_selection import (
 from gesture_classes import GestureName
 from gesture_detector import GestureDetector
 from object_detector import Yolov5ObjectDetector, box_iou
+from object_orientation import (
+    estimate_object_angle_in_frame,
+    stable_axis_angle_degrees,
+)
 from schemas import BoundingBox, DetectedObject, GestureFrame, SelectionMode
 
 LOGGER = logging.getLogger(__name__)
 CONTRACT_VERSION = "1.0"
 WINDOW_NAME = "multimodal fingertip selection"
+ORIENTATION_HISTORY_FRAMES = 7
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
@@ -102,6 +107,8 @@ def _base_result(session_id: str, status: str, reason: str) -> dict[str, object]
         "fingertip_depth_mm": None,
         "object_depth_mm": None,
         "object_depth_sample_count": None,
+        "object_angle_degrees": None,
+        "object_angle_sample_count": None,
         "depth_path": None,
         "left_mono_mapping_error": None,
         "fingertip_confidence": None,
@@ -277,6 +284,25 @@ def _recent_pointing_state(
     return observed_at - last_detected_at <= grace_seconds, last_detected_at
 
 
+def _sample_object_orientation(
+    frame,
+    item: DetectedObject,
+    history: deque[float],
+) -> tuple[float | None, str | None]:
+    try:
+        angle = estimate_object_angle_in_frame(
+            frame,
+            (item.box.x1, item.box.y1, item.box.x2, item.box.y2),
+        )
+        history.append(angle)
+        if len(history) < ORIENTATION_HISTORY_FRAMES:
+            return None, None
+        return stable_axis_angle_degrees(history), None
+    except ValueError as error:
+        history.clear()
+        return None, str(error)
+
+
 def run_session(
     config: GestureConfig,
     session_id: str,
@@ -308,6 +334,7 @@ def run_session(
     selected_fingertip: tuple[float, float] | None = None
     selected_hold_seconds = 0.0
     depth_history: deque[float] = deque(maxlen=5)
+    orientation_history: deque[float] = deque(maxlen=ORIENTATION_HISTORY_FRAMES)
     hand_clear_since: float | None = None
     display_reason = str(result["reason"])
     camera = CameraStream(config.camera)
@@ -316,6 +343,7 @@ def run_session(
     window_created = False
     last_pointing_at: float | None = None
     last_depth_error: str | None = None
+    last_orientation_error: str | None = None
     inference_paused = False
 
     try:
@@ -361,8 +389,10 @@ def run_session(
                     selected_fingertip = None
                     selected_hold_seconds = 0.0
                     depth_history.clear()
+                    orientation_history.clear()
                     hand_clear_since = None
                     last_depth_error = None
+                    last_orientation_error = None
                     result = _base_result(session_id, "rejected", "spoken_object_not_visible")
                     display_reason = "finding spoken object"
             if display and window_created and not _window_is_visible():
@@ -414,6 +444,7 @@ def run_session(
                 if selected is not None:
                     selection_complete = True
                     depth_history.clear()
+                    orientation_history.clear()
                     hand_clear_since = None
                     display_reason = "speech object selected, remove hand for depth"
 
@@ -449,14 +480,19 @@ def run_session(
                 selected_fingertip = sensor_center
                 selected_hold_seconds = hold.held_s
                 depth_history.clear()
+                orientation_history.clear()
                 hand_clear_since = None
                 display_reason = "selected, remove hand for depth"
             elif selection_kind in {"object", "speech_depth"} and selection_complete and selected:
                 tracked = _tracked_object(selected, objects)
                 if tracked is None:
+                    depth_history.clear()
+                    orientation_history.clear()
                     hand_clear_since = None
                     display_reason = "selected object not visible"
                 elif not gesture_frame.ok:
+                    depth_history.clear()
+                    orientation_history.clear()
                     hand_clear_since = None
                     display_reason = "hand detection unavailable"
                 elif (
@@ -465,17 +501,42 @@ def run_session(
                     and point_in_box(center, tracked.box)
                 ):
                     selected = tracked
+                    depth_history.clear()
+                    orientation_history.clear()
                     hand_clear_since = None
                     display_reason = "selected, remove hand for depth"
                 elif hand_clear_since is None:
                     selected = tracked
+                    depth_history.clear()
+                    orientation_history.clear()
                     hand_clear_since = observed_at
                     display_reason = "selected, keep hand clear"
                 elif observed_at - hand_clear_since < 2.0:
                     selected = tracked
+                    _, last_orientation_error = _sample_object_orientation(
+                        frame,
+                        tracked,
+                        orientation_history,
+                    )
                     display_reason = "selected, keep hand clear"
                 else:
                     selected = tracked
+                    stable_angle_degrees, orientation_error = (
+                        _sample_object_orientation(
+                            frame,
+                            tracked,
+                            orientation_history,
+                        )
+                    )
+                    if (
+                        orientation_error is not None
+                        and orientation_error != last_orientation_error
+                    ):
+                        print(
+                            f"OAK D ORIENTATION REJECTED: {orientation_error}",
+                            flush=True,
+                        )
+                    last_orientation_error = orientation_error
                     sensor_box = camera.to_sensor_box(
                         (
                             tracked.box.x1,
@@ -507,7 +568,12 @@ def run_session(
                             if stable_depth_mm is None
                             else "object depth ready"
                         )
-                        if stable_depth_mm is not None:
+                        if stable_depth_mm is not None and stable_angle_degrees is None:
+                            display_reason = (
+                                "measuring object orientation "
+                                f"{len(orientation_history)}/{ORIENTATION_HISTORY_FRAMES}"
+                            )
+                        if stable_depth_mm is not None and stable_angle_degrees is not None:
                             object_center = (
                                 (sensor_box[0] + sensor_box[2]) / 2.0,
                                 (sensor_box[1] + sensor_box[3]) / 2.0,
@@ -521,6 +587,12 @@ def run_session(
                             if mapping["left_mono_mapping_error"] is None:
                                 mapping["object_depth_sample_count"] = sample_count
                                 camera.save_latest_depth(depth_file)
+                                print(
+                                    "OAK D OBJECT ORIENTATION: "
+                                    f"angle={stable_angle_degrees:+.2f} deg, "
+                                    f"samples={len(orientation_history)}",
+                                    flush=True,
+                                )
                                 result = {
                                     **_base_result(session_id, "selected", "selected"),
                                     "safe_to_use": True,
@@ -536,6 +608,10 @@ def run_session(
                                         else None
                                     ),
                                     **mapping,
+                                    "object_angle_degrees": stable_angle_degrees,
+                                    "object_angle_sample_count": len(
+                                        orientation_history
+                                    ),
                                     "depth_path": str(depth_file),
                                     "fingertip_confidence": None,
                                     "pointing_finger_present": False,

@@ -14,6 +14,7 @@ if SRC not in sys.path:
    sys.path.insert(0, SRC)
 
 import json
+import math
 import subprocess
 import time
 import tkinter as tk
@@ -529,6 +530,8 @@ def _write_selection_data(info, gesture_result):
    left_mono_frame_size = None
    object_depth_mm = None
    object_depth_sample_count = None
+   object_angle_degrees = None
+   object_angle_sample_count = None
    selection_bbox = selected_object["bbox"]
    depth_result = gesture_result if gesture_selection else None
    if exec_mode.get() == "real" and not gesture_selection:
@@ -553,6 +556,8 @@ def _write_selection_data(info, gesture_result):
        ]
        object_depth_mm = depth_result.get("object_depth_mm")
        object_depth_sample_count = depth_result.get("object_depth_sample_count")
+       object_angle_degrees = depth_result.get("object_angle_degrees")
+       object_angle_sample_count = depth_result.get("object_angle_sample_count")
        mapping_error = depth_result.get(
            "left_mono_mapping_error",
            "live object has no left mono mapping",
@@ -568,12 +573,20 @@ def _write_selection_data(info, gesture_result):
        or object_depth_sample_count is None
    ):
        raise ValueError(f"OAK D left mono mapping failed: {mapping_error}")
+   if exec_mode.get() == "real" and (
+       not isinstance(object_angle_degrees, (int, float))
+       or not math.isfinite(float(object_angle_degrees))
+       or not isinstance(object_angle_sample_count, int)
+       or object_angle_sample_count < 1
+   ):
+       raise ValueError("OAK D object orientation has no stable PCA angle")
    if exec_mode.get() == "real":
        print(
            "OAK D SELECTED OBJECT: "
            f"rgb_u={float(rgb_selection_pixel[0]):.2f}, "
            f"rgb_v={float(rgb_selection_pixel[1]):.2f}, "
            f"depth={float(object_depth_mm):.1f} mm, "
+           f"angle={float(object_angle_degrees):+.2f} deg, "
            f"left_u={float(left_mono_center[0]):.2f}, "
            f"left_v={float(left_mono_center[1]):.2f}"
        )
@@ -599,6 +612,8 @@ def _write_selection_data(info, gesture_result):
        "left_mono_frame_size": left_mono_frame_size,
        "object_depth_mm": object_depth_mm,
        "object_depth_sample_count": object_depth_sample_count,
+       "object_angle_degrees": object_angle_degrees,
+       "object_angle_sample_count": object_angle_sample_count,
        "selection_phase": "overview",
        "selection_source": info.get("selection_mode", "speech"),
        "gesture_session_id": (depth_result or {}).get("session_id"),

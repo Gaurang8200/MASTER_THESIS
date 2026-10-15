@@ -53,3 +53,25 @@ def rotation_vector_to_quaternion(vector: Sequence[float]) -> tuple[float, float
         (0.0, 0.0, 0.0),
         (axis[0] * sine, axis[1] * sine, axis[2] * sine, math.cos(angle / 2.0)),
     ).quaternion
+
+
+def rotate_quaternion_about_base_z(
+    quaternion: Sequence[float],
+    angle_degrees: float,
+) -> tuple[float, float, float, float]:
+    values = tuple(float(value) for value in quaternion)
+    if len(values) != 4 or not all(math.isfinite(value) for value in values):
+        raise ValueError("robot orientation requires four finite quaternion values")
+    if not math.isfinite(angle_degrees):
+        raise ValueError("object angle must be finite")
+    x, y, z, w = values
+    half_angle = math.radians(angle_degrees) / 2.0
+    rotation_z = math.sin(half_angle)
+    rotation_w = math.cos(half_angle)
+    rotated = (
+        rotation_w * x - rotation_z * y,
+        rotation_w * y + rotation_z * x,
+        rotation_w * z + rotation_z * w,
+        rotation_w * w - rotation_z * z,
+    )
+    return CartesianPose.create((0.0, 0.0, 0.0), rotated).quaternion

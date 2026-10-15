@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -18,14 +19,13 @@ from .FR_depth_transformer import (
     CalibratedDepth,
     FrankaDepthTransformer,
 )
-from .FR_geometry import rotation_vector_to_quaternion
+from .FR_geometry import rotate_quaternion_about_base_z
 from .FR_models import CartesianPose, PixelPoint, RobotPoint
 from .FR_original_transformer import OriginalFrankaPixelTransformer
 from .FR_robot import FrankaRobotArm, RobotArm, SimulatedFrankaRobotArm
 from .FR_runtime_data import (
     read_class_file,
     read_detection_image_size,
-    read_numeric_values,
 )
 
 
@@ -39,6 +39,8 @@ TXT_DIR = YOLO_ROOT / "txt_file"
 class WorkflowContext:
     selected_point: RobotPoint | None = None
     selected_class: int | None = None
+    object_angle_degrees: float | None = None
+    reference_orientation: tuple[float, float, float, float] | None = None
     selected_orientation: tuple[float, float, float, float] | None = None
     target_zone: CartesianPose | None = None
     target_is_dynamic: bool = False
@@ -176,6 +178,7 @@ class FrankaAudioWorkflow:
     def _move_home(self) -> None:
         self._output(f"FRANKA MOVE HOME JOINTS: {self._config.home_joints}")
         self._arm.move_joints(self._config.home_joints)
+        self._context.reference_orientation = self._arm.current_pose().quaternion
 
     def _detect_object(self) -> None:
         detection_path = TXT_DIR / "detected_objects.json"
@@ -221,6 +224,7 @@ class FrankaAudioWorkflow:
             calibration_size,
         )
         self._context.selected_class = self._read_selected_class(data)
+        self._set_selected_orientation(data)
         object_depth_value = data.get("object_depth_mm")
         sample_count_value = data.get("object_depth_sample_count")
         if object_depth_value is not None and sample_count_value is not None:
@@ -287,7 +291,7 @@ class FrankaAudioWorkflow:
             camera_x,
             camera_y,
             camera_z,
-            self._config.default_orientation,
+            self._context.selected_orientation or self._config.default_orientation,
         )
 
     def _precision_detection(self) -> None:
@@ -318,22 +322,24 @@ class FrankaAudioWorkflow:
             )
 
     def _precision_pca(self) -> None:
-        if self._simulation:
-            self._output("FRANKA SIMULATION: Precision PCA accepted")
-            return
-        perception_steps.precision_pca_calculation(self._config.robot_ip)
+        if self._context.object_angle_degrees is None:
+            if self._simulation:
+                self._output("FRANKA SIMULATION: Default object angle accepted")
+                return
+            raise RuntimeError("Selected object has no stable live PCA angle")
+        self._output(
+            "FRANKA OBJECT PCA: "
+            f"angle={self._context.object_angle_degrees:+.2f} deg"
+        )
 
     def _precision_direction(self) -> None:
-        if self._simulation:
-            self._context.selected_orientation = self._config.default_orientation
-            self._output("FRANKA SIMULATION: Default downward orientation accepted")
-            return
-        perception_steps.precision_direction_object(self._config.robot_ip)
-        orientation_path = TXT_DIR / "robot_RPY.txt"
-        values = read_numeric_values(orientation_path)
-        if len(values) != 3:
-            raise ValueError("Precision direction must produce three rotation vector values")
-        self._context.selected_orientation = rotation_vector_to_quaternion(values)
+        if self._context.selected_orientation is None:
+            if self._simulation:
+                self._context.selected_orientation = self._config.default_orientation
+                self._output("FRANKA SIMULATION: Default orientation accepted")
+                return
+            raise RuntimeError("Selected object has no safe gripper orientation")
+        self._output("FRANKA GRIPPER DIRECTION: Live object orientation accepted")
 
     def _move_to_pick(self) -> None:
         point = self._require_selected_point()
@@ -509,6 +515,30 @@ class FrankaAudioWorkflow:
         if self._context.selected_class is None:
             raise RuntimeError("Selected object has no class")
         return self._context.selected_class
+
+    def _set_selected_orientation(self, selection_data: dict[str, object]) -> None:
+        value = selection_data.get("object_angle_degrees")
+        if value is None and self._simulation:
+            self._context.selected_orientation = self._config.default_orientation
+            return
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise ValueError("Selected object has no stable PCA angle")
+        reference = self._context.reference_orientation
+        if reference is None:
+            raise RuntimeError("Franka home orientation was not captured")
+        object_angle = float(value)
+        gripper_rotation = object_angle + 90.0
+        self._context.object_angle_degrees = object_angle
+        self._context.selected_orientation = rotate_quaternion_about_base_z(
+            reference,
+            gripper_rotation,
+        )
+        self._output(
+            "FRANKA OBJECT ORIENTATION: "
+            f"object_angle={object_angle:+.2f} deg, "
+            f"gripper_offset=+90.00 deg, "
+            f"relative_z_rotation={gripper_rotation:+.2f} deg"
+        )
 
     def _load_selection_context(self) -> None:
         selection_path = TXT_DIR / "selection_data.json"
