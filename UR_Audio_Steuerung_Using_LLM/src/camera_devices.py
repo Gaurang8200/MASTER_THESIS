@@ -100,48 +100,59 @@ def object_depth_from_box(
     y1 = max(0, min(height - 1, int(round(float(bbox[1])))))
     x2 = max(x1 + 1, min(width, int(round(float(bbox[2])))))
     y2 = max(y1 + 1, min(height, int(round(float(bbox[3])))))
-    box_width = x2 - x1
-    box_height = y2 - y1
-    center_x = x1 + box_width / 2.0
-    center_y = y1 + box_height / 2.0
-    sample_centers = (
-        (center_x, center_y),
-        (x1 + box_width * 0.25, center_y),
-        (x1 + box_width * 0.75, center_y),
-        (center_x, y1 + box_height * 0.25),
-        (center_x, y1 + box_height * 0.75),
-    )
+    center_x = int(round((x1 + x2) / 2.0))
+    center_y = int(round((y1 + y2) / 2.0))
+    patch = depth_mm[
+        max(y1, center_y - DEPTH_PATCH_RADIUS_PX):min(
+            y2, center_y + DEPTH_PATCH_RADIUS_PX + 1
+        ),
+        max(x1, center_x - DEPTH_PATCH_RADIUS_PX):min(
+            x2, center_x + DEPTH_PATCH_RADIUS_PX + 1
+        ),
+    ]
+    return _consistent_object_depth(patch.reshape(-1))
 
-    sampled_pixels: set[tuple[int, int]] = set()
-    object_depths: list[float] = []
-    for sample_x, sample_y in sample_centers:
-        pixel_x = int(round(sample_x))
-        pixel_y = int(round(sample_y))
-        patch_x1 = max(x1, pixel_x - DEPTH_PATCH_RADIUS_PX)
-        patch_x2 = min(x2, pixel_x + DEPTH_PATCH_RADIUS_PX + 1)
-        patch_y1 = max(y1, pixel_y - DEPTH_PATCH_RADIUS_PX)
-        patch_y2 = min(y2, pixel_y + DEPTH_PATCH_RADIUS_PX + 1)
-        for y in range(patch_y1, patch_y2):
-            for x in range(patch_x1, patch_x2):
-                if (x, y) in sampled_pixels:
-                    continue
-                sampled_pixels.add((x, y))
-                value = float(depth_mm[y, x])
-                if (
-                    not np.isfinite(value)
-                    or not MIN_DEPTH_MM <= value <= MAX_DEPTH_MM
-                ):
-                    continue
-                object_depths.append(value)
 
-    ordered = np.sort(np.asarray(object_depths, dtype=float))
-    for start, minimum_depth in enumerate(ordered):
-        cluster = ordered[start:][
-            ordered[start:] - minimum_depth <= OBJECT_DEPTH_CLUSTER_SPREAD_MM
+def object_depth_from_mask(
+    depth_mm: np.ndarray,
+    object_mask: np.ndarray,
+    origin: Sequence[int],
+) -> tuple[float, int]:
+    if depth_mm.ndim != 2 or object_mask.ndim != 2:
+        raise ValueError("OAK D depth and object mask must be two dimensional")
+    if len(origin) != 2:
+        raise ValueError("OAK D object mask origin must contain two values")
+    x1, y1 = (int(value) for value in origin)
+    mask_height, mask_width = object_mask.shape
+    x2 = x1 + mask_width
+    y2 = y1 + mask_height
+    if x1 < 0 or y1 < 0 or x2 > depth_mm.shape[1] or y2 > depth_mm.shape[0]:
+        raise ValueError("OAK D object mask is outside the depth frame")
+    values = depth_mm[y1:y2, x1:x2][object_mask > 0]
+    return _consistent_object_depth(values)
+
+
+def _consistent_object_depth(values: np.ndarray) -> tuple[float, int]:
+    values = np.asarray(values, dtype=float)
+    ordered = np.sort(
+        values[
+            np.isfinite(values)
+            & (values >= MIN_DEPTH_MM)
+            & (values <= MAX_DEPTH_MM)
         ]
-        if cluster.size >= MIN_OBJECT_DEPTH_PIXELS:
-            return float(np.median(cluster)), int(cluster.size)
-    raise ValueError("OAK D object area has fewer than three consistent depth pixels")
+    )
+    best_start = 0
+    best_stop = 0
+    start = 0
+    for stop, maximum_depth in enumerate(ordered, start=1):
+        while maximum_depth - ordered[start] > OBJECT_DEPTH_CLUSTER_SPREAD_MM:
+            start += 1
+        if stop - start > best_stop - best_start:
+            best_start, best_stop = start, stop
+    cluster = ordered[best_start:best_stop]
+    if cluster.size < MIN_OBJECT_DEPTH_PIXELS:
+        raise ValueError("OAK D object mask has fewer than three consistent depth pixels")
+    return float(np.median(cluster)), int(cluster.size)
 
 
 def stable_depth_from_history(depths_mm: Sequence[float]) -> float | None:

@@ -32,7 +32,8 @@ from gesture_classes import GestureName
 from gesture_detector import GestureDetector
 from object_detector import Yolov5ObjectDetector, box_iou
 from object_orientation import (
-    estimate_object_angle_in_frame,
+    ObjectOrientation,
+    measure_object_orientation,
     stable_axis_angle_degrees,
 )
 from schemas import BoundingBox, DetectedObject, GestureFrame, SelectionMode
@@ -288,19 +289,19 @@ def _sample_object_orientation(
     frame,
     item: DetectedObject,
     history: deque[float],
-) -> tuple[float | None, str | None]:
+) -> tuple[float | None, ObjectOrientation | None, str | None]:
     try:
-        angle = estimate_object_angle_in_frame(
+        orientation = measure_object_orientation(
             frame,
             (item.box.x1, item.box.y1, item.box.x2, item.box.y2),
         )
-        history.append(angle)
+        history.append(orientation.angle_degrees)
         if len(history) < ORIENTATION_HISTORY_FRAMES:
-            return None, None
-        return stable_axis_angle_degrees(history), None
+            return None, orientation, None
+        return stable_axis_angle_degrees(history), orientation, None
     except ValueError as error:
         history.clear()
-        return None, str(error)
+        return None, None, str(error)
 
 
 def run_session(
@@ -513,7 +514,7 @@ def run_session(
                     display_reason = "selected, keep hand clear"
                 elif observed_at - hand_clear_since < 2.0:
                     selected = tracked
-                    _, last_orientation_error = _sample_object_orientation(
+                    _, _, last_orientation_error = _sample_object_orientation(
                         frame,
                         tracked,
                         orientation_history,
@@ -521,7 +522,7 @@ def run_session(
                     display_reason = "selected, keep hand clear"
                 else:
                     selected = tracked
-                    stable_angle_degrees, orientation_error = (
+                    stable_angle_degrees, orientation, orientation_error = (
                         _sample_object_orientation(
                             frame,
                             tracked,
@@ -547,10 +548,19 @@ def run_session(
                         frame.shape,
                     )
                     try:
-                        depth_mm, sample_count = camera.measure_object_depth(sensor_box)
+                        if orientation is None:
+                            raise ValueError("OAK D object mask is unavailable")
+                        depth_mm, sample_count = camera.measure_object_depth(
+                            orientation.mask,
+                            orientation.origin,
+                        )
                     except ValueError as error:
-                        display_reason = "measuring object depth"
-                        if str(error) != last_depth_error:
+                        display_reason = (
+                            "measuring object orientation"
+                            if orientation is None
+                            else "measuring object depth"
+                        )
+                        if orientation is not None and str(error) != last_depth_error:
                             print(f"OAK D DEPTH REJECTED: {error}", flush=True)
                             last_depth_error = str(error)
                     else:

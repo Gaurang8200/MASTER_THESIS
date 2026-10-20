@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
 
-def estimate_object_angle(crop: np.ndarray) -> float:
+@dataclass(frozen=True)
+class ObjectOrientation:
+    angle_degrees: float
+    mask: np.ndarray
+    origin: tuple[int, int]
+
+
+def _segment_object(crop: np.ndarray) -> np.ndarray:
     if crop.size == 0:
         raise ValueError("object crop is empty")
     saturation = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)[:, :, 1]
@@ -29,6 +37,10 @@ def estimate_object_angle(crop: np.ndarray) -> float:
         raise ValueError("object contour is too small")
     object_mask = np.zeros_like(mask)
     cv2.drawContours(object_mask, [contour], -1, 255, cv2.FILLED)
+    return object_mask
+
+
+def _angle_from_mask(object_mask: np.ndarray) -> float:
     point_y, point_x = np.nonzero(object_mask)
     points = np.column_stack((point_x, point_y)).astype(np.float64)
     _, eigenvectors, eigenvalues = cv2.PCACompute2(points, mean=None)
@@ -42,10 +54,14 @@ def estimate_object_angle(crop: np.ndarray) -> float:
     return math.degrees(math.atan2(-axis_y, axis_x))
 
 
-def estimate_object_angle_in_frame(
+def estimate_object_angle(crop: np.ndarray) -> float:
+    return _angle_from_mask(_segment_object(crop))
+
+
+def measure_object_orientation(
     frame: np.ndarray,
     box: Sequence[float],
-) -> float:
+) -> ObjectOrientation:
     if frame.ndim != 3 or frame.shape[2] != 3:
         raise ValueError("object orientation requires a BGR image")
     if len(box) != 4:
@@ -57,7 +73,9 @@ def estimate_object_angle_in_frame(
     y2 = min(height, int(math.ceil(float(box[3]))))
     if x1 >= x2 or y1 >= y2:
         raise ValueError("object box is outside the image")
-    return estimate_object_angle(frame[y1:y2, x1:x2])
+    crop = frame[y1:y2, x1:x2]
+    mask = _segment_object(crop)
+    return ObjectOrientation(_angle_from_mask(mask), mask, (x1, y1))
 
 
 def stable_axis_angle_degrees(angles: Sequence[float]) -> float:
