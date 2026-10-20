@@ -24,7 +24,7 @@ from src.camera_devices import (
     OakDFrame,
     RgbCameraStream,
     depth_at_pixel,
-    object_depth_from_mask,
+    object_depth_from_box,
     stable_depth_from_history,
 )
 
@@ -100,26 +100,11 @@ class CameraStream:
 
     def measure_object_depth(
         self,
-        object_mask: np.ndarray,
-        origin: tuple[int, int],
+        box: tuple[float, float, float, float],
     ) -> tuple[float, int]:
         if self._latest_frame is None:
             raise RuntimeError("OAK D depth frame is not available")
-        sensor_mask = object_mask
-        sensor_x, sensor_y = origin
-        depth_height, depth_width = self._latest_frame.depth_mm.shape
-        if self._config.flip_horizontal:
-            sensor_mask = np.fliplr(sensor_mask)
-            sensor_x = depth_width - sensor_x - sensor_mask.shape[1]
-        if self.rotation_degrees == 180:
-            sensor_mask = np.rot90(sensor_mask, 2)
-            sensor_x = depth_width - sensor_x - sensor_mask.shape[1]
-            sensor_y = depth_height - sensor_y - sensor_mask.shape[0]
-        return object_depth_from_mask(
-            self._latest_frame.depth_mm,
-            sensor_mask,
-            (sensor_x, sensor_y),
-        )
+        return object_depth_from_box(self._latest_frame.depth_mm, box)
 
     @staticmethod
     def stable_depth(depths_mm: list[float]) -> float | None:

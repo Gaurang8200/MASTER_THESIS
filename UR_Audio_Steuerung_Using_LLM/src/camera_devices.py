@@ -100,8 +100,8 @@ def object_depth_from_box(
     y1 = max(0, min(height - 1, int(round(float(bbox[1])))))
     x2 = max(x1 + 1, min(width, int(round(float(bbox[2])))))
     y2 = max(y1 + 1, min(height, int(round(float(bbox[3])))))
-    center_x = int(round((x1 + x2) / 2.0))
-    center_y = int(round((y1 + y2) / 2.0))
+    center_x = x1 + (x2 - x1) // 2
+    center_y = y1 + (y2 - y1) // 2
     patch = depth_mm[
         max(y1, center_y - DEPTH_PATCH_RADIUS_PX):min(
             y2, center_y + DEPTH_PATCH_RADIUS_PX + 1
@@ -111,25 +111,6 @@ def object_depth_from_box(
         ),
     ]
     return _consistent_object_depth(patch.reshape(-1))
-
-
-def object_depth_from_mask(
-    depth_mm: np.ndarray,
-    object_mask: np.ndarray,
-    origin: Sequence[int],
-) -> tuple[float, int]:
-    if depth_mm.ndim != 2 or object_mask.ndim != 2:
-        raise ValueError("OAK D depth and object mask must be two dimensional")
-    if len(origin) != 2:
-        raise ValueError("OAK D object mask origin must contain two values")
-    x1, y1 = (int(value) for value in origin)
-    mask_height, mask_width = object_mask.shape
-    x2 = x1 + mask_width
-    y2 = y1 + mask_height
-    if x1 < 0 or y1 < 0 or x2 > depth_mm.shape[1] or y2 > depth_mm.shape[0]:
-        raise ValueError("OAK D object mask is outside the depth frame")
-    values = depth_mm[y1:y2, x1:x2][object_mask > 0]
-    return _consistent_object_depth(values)
 
 
 def _consistent_object_depth(values: np.ndarray) -> tuple[float, int]:

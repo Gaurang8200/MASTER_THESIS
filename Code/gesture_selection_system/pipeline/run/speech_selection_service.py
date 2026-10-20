@@ -11,6 +11,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
+from statistics import median
 from typing import Sequence
 
 PIPELINE_ROOT = Path(__file__).resolve().parents[1]
@@ -288,17 +289,24 @@ def _recent_pointing_state(
 def _sample_object_orientation(
     frame,
     item: DetectedObject,
-    history: deque[float],
+    history: deque[ObjectOrientation],
 ) -> tuple[float | None, ObjectOrientation | None, str | None]:
     try:
         orientation = measure_object_orientation(
             frame,
             (item.box.x1, item.box.y1, item.box.x2, item.box.y2),
         )
-        history.append(orientation.angle_degrees)
+        history.append(orientation)
         if len(history) < ORIENTATION_HISTORY_FRAMES:
             return None, orientation, None
-        return stable_axis_angle_degrees(history), orientation, None
+        angle = stable_axis_angle_degrees(
+            [measurement.angle_degrees for measurement in history]
+        )
+        depth_box = tuple(
+            int(round(median(measurement.depth_box[index] for measurement in history)))
+            for index in range(4)
+        )
+        return angle, ObjectOrientation(angle, depth_box), None
     except ValueError as error:
         history.clear()
         return None, None, str(error)
@@ -335,7 +343,9 @@ def run_session(
     selected_fingertip: tuple[float, float] | None = None
     selected_hold_seconds = 0.0
     depth_history: deque[float] = deque(maxlen=5)
-    orientation_history: deque[float] = deque(maxlen=ORIENTATION_HISTORY_FRAMES)
+    orientation_history: deque[ObjectOrientation] = deque(
+        maxlen=ORIENTATION_HISTORY_FRAMES
+    )
     hand_clear_since: float | None = None
     display_reason = str(result["reason"])
     camera = CameraStream(config.camera)
@@ -547,12 +557,16 @@ def run_session(
                         ),
                         frame.shape,
                     )
+                    sensor_depth_box = (
+                        camera.to_sensor_box(orientation.depth_box, frame.shape)
+                        if orientation is not None
+                        else None
+                    )
                     try:
-                        if orientation is None:
+                        if sensor_depth_box is None:
                             raise ValueError("OAK D object mask is unavailable")
                         depth_mm, sample_count = camera.measure_object_depth(
-                            orientation.mask,
-                            orientation.origin,
+                            sensor_depth_box
                         )
                     except ValueError as error:
                         display_reason = (
@@ -570,6 +584,7 @@ def run_session(
                         print(
                             "OAK D DEPTH FRAME: "
                             f"depth={depth_mm:.1f} mm, samples={sample_count}, "
+                            f"box={tuple(round(value, 1) for value in sensor_depth_box)}, "
                             f"stable_frames={len(depth_history)}/3",
                             flush=True,
                         )
