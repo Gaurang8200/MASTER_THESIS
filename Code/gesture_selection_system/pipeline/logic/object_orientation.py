@@ -11,7 +11,6 @@ import numpy as np
 @dataclass(frozen=True)
 class ObjectOrientation:
     angle_degrees: float
-    depth_box: tuple[int, int, int, int]
 
 
 def _segment_object(crop: np.ndarray) -> np.ndarray:
@@ -41,10 +40,10 @@ def _segment_object(crop: np.ndarray) -> np.ndarray:
 
 def _geometry_from_mask(
     object_mask: np.ndarray,
-) -> tuple[float, tuple[float, float]]:
+) -> float:
     point_y, point_x = np.nonzero(object_mask)
     points = np.column_stack((point_x, point_y)).astype(np.float64)
-    mean, eigenvectors, eigenvalues = cv2.PCACompute2(points, mean=None)
+    _, eigenvectors, eigenvalues = cv2.PCACompute2(points, mean=None)
     if eigenvalues[1, 0] <= 0.0:
         raise ValueError("object PCA has no minor axis")
     if float(eigenvalues[0, 0] / eigenvalues[1, 0]) < 1.5:
@@ -52,14 +51,11 @@ def _geometry_from_mask(
     axis_x, axis_y = eigenvectors[0]
     if axis_x < 0.0:
         axis_x, axis_y = -axis_x, -axis_y
-    return (
-        math.degrees(math.atan2(-axis_y, axis_x)),
-        (float(mean[0, 0]), float(mean[0, 1])),
-    )
+    return math.degrees(math.atan2(-axis_y, axis_x))
 
 
 def estimate_object_angle(crop: np.ndarray) -> float:
-    return _geometry_from_mask(_segment_object(crop))[0]
+    return _geometry_from_mask(_segment_object(crop))
 
 
 def measure_object_orientation(
@@ -78,25 +74,7 @@ def measure_object_orientation(
     if x1 >= x2 or y1 >= y2:
         raise ValueError("object box is outside the image")
     crop = frame[y1:y2, x1:x2]
-    mask = _segment_object(crop)
-    angle, center = _geometry_from_mask(mask)
-    center_x = int(round(center[0]))
-    center_y = int(round(center[1]))
-    patch = mask[
-        max(0, center_y - 1):center_y + 2,
-        max(0, center_x - 1):center_x + 2,
-    ]
-    if patch.shape != (3, 3) or not np.all(patch):
-        _, _, _, (center_x, center_y) = cv2.minMaxLoc(
-            cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-        )
-    depth_box = (
-        max(x1, x1 + center_x - 1),
-        max(y1, y1 + center_y - 1),
-        min(x2, x1 + center_x + 2),
-        min(y2, y1 + center_y + 2),
-    )
-    return ObjectOrientation(angle, depth_box)
+    return ObjectOrientation(_geometry_from_mask(_segment_object(crop)))
 
 
 def stable_axis_angle_degrees(angles: Sequence[float]) -> float:

@@ -100,17 +100,32 @@ def object_depth_from_box(
     y1 = max(0, min(height - 1, int(round(float(bbox[1])))))
     x2 = max(x1 + 1, min(width, int(round(float(bbox[2])))))
     y2 = max(y1 + 1, min(height, int(round(float(bbox[3])))))
-    center_x = x1 + (x2 - x1) // 2
-    center_y = y1 + (y2 - y1) // 2
-    patch = depth_mm[
-        max(y1, center_y - DEPTH_PATCH_RADIUS_PX):min(
-            y2, center_y + DEPTH_PATCH_RADIUS_PX + 1
-        ),
-        max(x1, center_x - DEPTH_PATCH_RADIUS_PX):min(
-            x2, center_x + DEPTH_PATCH_RADIUS_PX + 1
-        ),
-    ]
-    return _consistent_object_depth(patch.reshape(-1))
+    samples: list[tuple[float, int]] = []
+    patch_width = 2 * DEPTH_PATCH_RADIUS_PX + 1
+    step_x = max(patch_width, (x2 - x1) // 8)
+    step_y = max(patch_width, (y2 - y1) // 8)
+    for y in range(y1 + DEPTH_PATCH_RADIUS_PX, y2 - DEPTH_PATCH_RADIUS_PX, step_y):
+        for x in range(x1 + DEPTH_PATCH_RADIUS_PX, x2 - DEPTH_PATCH_RADIUS_PX, step_x):
+            patch = depth_mm[
+                y - DEPTH_PATCH_RADIUS_PX:y + DEPTH_PATCH_RADIUS_PX + 1,
+                x - DEPTH_PATCH_RADIUS_PX:x + DEPTH_PATCH_RADIUS_PX + 1,
+            ]
+            try:
+                samples.append(_consistent_object_depth(patch.reshape(-1)))
+            except ValueError:
+                continue
+    samples.sort()
+    start = 0
+    for stop, (depth, _) in enumerate(samples):
+        while depth - samples[start][0] > OBJECT_DEPTH_CLUSTER_SPREAD_MM:
+            start += 1
+        if stop - start + 1 >= MIN_OBJECT_DEPTH_PIXELS:
+            group = samples[start:stop + 1]
+            return (
+                float(np.median([value for value, _ in group])),
+                sum(count for _, count in group),
+            )
+    raise ValueError("OAK D object area has fewer than three consistent depth patches")
 
 
 def _consistent_object_depth(values: np.ndarray) -> tuple[float, int]:

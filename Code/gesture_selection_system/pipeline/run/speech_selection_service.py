@@ -11,7 +11,6 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from statistics import median
 from typing import Sequence
 
 PIPELINE_ROOT = Path(__file__).resolve().parents[1]
@@ -302,11 +301,7 @@ def _sample_object_orientation(
         angle = stable_axis_angle_degrees(
             [measurement.angle_degrees for measurement in history]
         )
-        depth_box = tuple(
-            int(round(median(measurement.depth_box[index] for measurement in history)))
-            for index in range(4)
-        )
-        return angle, ObjectOrientation(angle, depth_box), None
+        return angle, orientation, None
     except ValueError as error:
         history.clear()
         return None, None, str(error)
@@ -557,16 +552,11 @@ def run_session(
                         ),
                         frame.shape,
                     )
-                    sensor_depth_box = (
-                        camera.to_sensor_box(orientation.depth_box, frame.shape)
-                        if orientation is not None
-                        else None
-                    )
                     try:
-                        if sensor_depth_box is None:
-                            raise ValueError("OAK D object mask is unavailable")
+                        if orientation is None:
+                            raise ValueError("OAK D object orientation is unavailable")
                         depth_mm, sample_count = camera.measure_object_depth(
-                            sensor_depth_box
+                            sensor_box
                         )
                     except ValueError as error:
                         display_reason = (
@@ -584,7 +574,7 @@ def run_session(
                         print(
                             "OAK D DEPTH FRAME: "
                             f"depth={depth_mm:.1f} mm, samples={sample_count}, "
-                            f"box={tuple(round(value, 1) for value in sensor_depth_box)}, "
+                            f"box={tuple(round(value, 1) for value in sensor_box)}, "
                             f"stable_frames={len(depth_history)}/3",
                             flush=True,
                         )

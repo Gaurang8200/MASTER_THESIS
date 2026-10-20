@@ -349,6 +349,11 @@ class FrankaAudioWorkflow:
             raise RuntimeError("OAK D depth measurement is required for pickup")
         grip_offset = self._config.grip_offset_below_surface_mm
         pick_height = point.z - grip_offset
+        if pick_height <= self._config.table_surface_z_mm:
+            raise ValueError(
+                f"Franka pickup Z {pick_height:.1f} mm is at or below table Z "
+                f"{self._config.table_surface_z_mm:.1f} mm"
+            )
         self._validate_workspace((point.x, point.y, pick_height))
         alignment_height = max(self._config.lift_height_mm, pick_height)
         self._output("FRANKA GRIPPER: Opening before pickup approach")
