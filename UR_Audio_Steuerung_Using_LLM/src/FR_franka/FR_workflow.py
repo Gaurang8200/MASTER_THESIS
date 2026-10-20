@@ -279,14 +279,6 @@ class FrankaAudioWorkflow:
         camera_x = point.x + offset_x
         camera_y = point.y + offset_y
         camera_z = self._config.approach_height_mm + offset_z
-        self._output(
-            "FRANKA CAMERA OFFSET: "
-            f"x={offset_x:.2f} mm, y={offset_y:.2f} mm, z={offset_z:.2f} mm"
-        )
-        self._output(
-            "FRANKA CAMERA APPROACH: "
-            f"x={camera_x:.2f} mm, y={camera_y:.2f} mm, z={camera_z:.2f} mm"
-        )
         self._move_cartesian(
             camera_x,
             camera_y,
@@ -358,11 +350,6 @@ class FrankaAudioWorkflow:
         alignment_height = max(self._config.lift_height_mm, pick_height)
         self._output("FRANKA GRIPPER: Opening before pickup approach")
         self._arm.release()
-        self._output(
-            "FRANKA PICK ALIGNMENT: "
-            f"x={point.x:.2f} mm, y={point.y:.2f} mm, "
-            f"z={alignment_height:.2f} mm"
-        )
         self._move_cartesian(
             point.x,
             point.y,
@@ -492,9 +479,6 @@ class FrankaAudioWorkflow:
         quaternion: Sequence[float],
     ) -> None:
         self._validate_workspace((x, y, z))
-        self._output(
-            f"FRANKA MOVE CARTESIAN: x={x:.2f} mm, y={y:.2f} mm, z={z:.2f} mm"
-        )
         self._arm.move_pose(CartesianPose.create((x, y, z), quaternion))
 
     def _validate_workspace(self, translation: Sequence[float]) -> None:
